@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase-browser";
 import {
   Sparkles, FileText, Target, Copy, Check, Loader2, ArrowRight, Zap,
-  Mail, Linkedin, Lock, Crown, LogOut, Gift,
+  Mail, Linkedin, Crown, LogOut, Gift, Coins,
 } from "lucide-react";
 
 async function callClaudeAPI(prompt, tool, maxTokens = 4000) {
@@ -36,26 +36,43 @@ function CopyBtn({ text }) {
   );
 }
 
-function FreeUseIndicator({ isPro, used, tool }) {
+function UsageIndicator({ isPro, credits, freeUsed, tool, onUpgrade }) {
   if (isPro) return null;
-  const remaining = Math.max(0, 1 - used);
+
+  if (credits > 0) {
+    return (
+      <div className={`flex items-center gap-2 px-3 py-2 rounded-xl border text-xs ${
+        credits > 2
+          ? "bg-blue-500/10 border-blue-500/30 text-blue-300"
+          : "bg-amber-500/10 border-amber-500/30 text-amber-300"
+      }`}>
+        <Coins className="w-3.5 h-3.5" />
+        <span><b>{credits} credit{credits === 1 ? "" : "s"}</b> remaining for this tool</span>
+      </div>
+    );
+  }
+
+  const freeRemaining = Math.max(0, 1 - freeUsed);
   return (
     <div className={`flex items-center gap-2 px-3 py-2 rounded-xl border text-xs ${
-      remaining > 0
+      freeRemaining > 0
         ? "bg-green-500/10 border-green-500/30 text-green-300"
         : "bg-amber-500/10 border-amber-500/30 text-amber-300"
     }`}>
       <Gift className="w-3.5 h-3.5" />
-      {remaining > 0 ? (
-        <span><b>{remaining} free use</b> remaining for this tool</span>
+      {freeRemaining > 0 ? (
+        <span><b>{freeRemaining} free use</b> remaining for this tool</span>
       ) : (
-        <span>Free trial used — upgrade to Pro for unlimited</span>
+        <>
+          <span>Free trial used — </span>
+          <button onClick={onUpgrade} className="font-bold underline">get more</button>
+        </>
       )}
     </div>
   );
 }
 
-function ResumeOptimizer({ isPro, onUpgrade, onNeedLogin, usage, onUse }) {
+function ResumeOptimizer({ isPro, credits, freeUsed, onUpgrade, onNeedLogin, onUse }) {
   const [resume, setResume] = useState("");
   const [jobDesc, setJobDesc] = useState("");
   const [loading, setLoading] = useState(false);
@@ -98,7 +115,7 @@ Return ONLY JSON (no markdown):
 
   return (
     <div className="space-y-5">
-      <FreeUseIndicator isPro={isPro} used={usage.resume || 0} tool="resume" />
+      <UsageIndicator isPro={isPro} credits={credits} freeUsed={freeUsed} tool="resume" onUpgrade={onUpgrade} />
       <div className="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-3">
         <div className="flex items-center gap-2"><FileText className="w-4 h-4 text-amber-400" /><label className="font-semibold text-sm">Your current resume</label></div>
         <textarea value={resume} onChange={(e) => setResume(e.target.value)} placeholder="Paste your full resume here..." className="w-full h-44 bg-black/30 border border-white/10 rounded-xl p-4 text-sm placeholder:text-white/30 focus:outline-none focus:border-amber-400/50 resize-none" />
@@ -131,7 +148,7 @@ Return ONLY JSON (no markdown):
   );
 }
 
-function CoverLetter({ isPro, onUpgrade, onNeedLogin, usage, onUse }) {
+function CoverLetter({ isPro, credits, freeUsed, onUpgrade, onNeedLogin, onUse }) {
   const [resume, setResume] = useState("");
   const [jobDesc, setJobDesc] = useState("");
   const [tone, setTone] = useState("professional");
@@ -174,7 +191,7 @@ Return ONLY JSON:
 
   return (
     <div className="space-y-5">
-      <FreeUseIndicator isPro={isPro} used={usage.cover || 0} tool="cover" />
+      <UsageIndicator isPro={isPro} credits={credits} freeUsed={freeUsed} tool="cover" onUpgrade={onUpgrade} />
       <div className="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-3">
         <div className="flex items-center gap-2"><FileText className="w-4 h-4 text-amber-400" /><label className="font-semibold text-sm">Your resume</label></div>
         <textarea value={resume} onChange={(e) => setResume(e.target.value)} placeholder="Paste your resume..." className="w-full h-32 bg-black/30 border border-white/10 rounded-xl p-4 text-sm placeholder:text-white/30 focus:outline-none focus:border-amber-400/50 resize-none" />
@@ -209,7 +226,7 @@ Return ONLY JSON:
   );
 }
 
-function LinkedInRewriter({ isPro, onUpgrade, onNeedLogin, usage, onUse }) {
+function LinkedInRewriter({ isPro, credits, freeUsed, onUpgrade, onNeedLogin, onUse }) {
   const [bio, setBio] = useState("");
   const [goal, setGoal] = useState("");
   const [loading, setLoading] = useState(false);
@@ -251,7 +268,7 @@ Return ONLY JSON:
 
   return (
     <div className="space-y-5">
-      <FreeUseIndicator isPro={isPro} used={usage.linkedin || 0} tool="linkedin" />
+      <UsageIndicator isPro={isPro} credits={credits} freeUsed={freeUsed} tool="linkedin" onUpgrade={onUpgrade} />
       <div className="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-3">
         <div className="flex items-center gap-2"><Linkedin className="w-4 h-4 text-amber-400" /><label className="font-semibold text-sm">Current LinkedIn bio</label></div>
         <textarea value={bio} onChange={(e) => setBio(e.target.value)} placeholder="Paste your current LinkedIn About..." className="w-full h-36 bg-black/30 border border-white/10 rounded-xl p-4 text-sm placeholder:text-white/30 focus:outline-none focus:border-amber-400/50 resize-none" />
@@ -276,30 +293,82 @@ Return ONLY JSON:
 }
 
 function UpgradeModal({ onClose }) {
-  const [loading, setLoading] = useState(false);
-  const checkout = async () => {
-    setLoading(true);
-    const res = await fetch("/api/create-checkout", { method: "POST" });
+  const [loading, setLoading] = useState(null);
+
+  const checkout = async (plan) => {
+    setLoading(plan);
+    const res = await fetch("/api/create-checkout", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ plan }),
+    });
     const { url } = await res.json();
     if (url) window.location.href = url;
   };
+
   return (
-    <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="bg-gradient-to-br from-slate-900 to-indigo-950 border border-white/10 rounded-3xl max-w-md w-full p-6 relative">
+    <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
+      <div className="bg-gradient-to-br from-slate-900 to-indigo-950 border border-white/10 rounded-3xl max-w-2xl w-full p-6 relative my-8">
         <button onClick={onClose} className="absolute top-4 right-4 text-white/40 hover:text-white text-xl">×</button>
-        <div className="w-14 h-14 mx-auto rounded-2xl bg-gradient-to-br from-amber-400 to-pink-500 flex items-center justify-center mb-4"><Crown className="w-7 h-7 text-black" /></div>
-        <h2 className="text-2xl font-bold text-center mb-2">Unlock Pro</h2>
-        <p className="text-center text-white/60 text-sm mb-6">You've used your free try. Go unlimited for $19/mo.</p>
-        <div className="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-3 mb-5">
-          {["Unlimited resume optimizations", "Unlimited cover letters", "Unlimited LinkedIn rewrites", "All 4 cover letter tones", "Priority AI processing"].map((f, i) => (
-            <div key={i} className="flex items-center gap-2 text-sm"><Check className="w-4 h-4 text-green-400 flex-shrink-0" /><span className="text-white/80">{f}</span></div>
-          ))}
+        <div className="text-center mb-6">
+          <h2 className="text-2xl sm:text-3xl font-bold mb-2">Need more uses?</h2>
+          <p className="text-white/60 text-sm">Two ways to keep going. Pick what fits.</p>
         </div>
-        <div className="text-center mb-5"><div className="text-4xl font-black bg-gradient-to-r from-amber-300 to-pink-400 bg-clip-text text-transparent">$19</div><div className="text-xs text-white/50">per month · cancel anytime</div></div>
-        <button onClick={checkout} disabled={loading} className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-amber-400 to-pink-500 text-black font-bold flex items-center justify-center gap-2 disabled:opacity-50">
-          {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <><Crown className="w-4 h-4" /> Upgrade Now</>}
-        </button>
-        <p className="text-center text-xs text-white/40 mt-3">One landed interview pays for years.</p>
+
+        <div className="grid sm:grid-cols-2 gap-4">
+          <div className="bg-white/5 border border-white/10 rounded-2xl p-5 flex flex-col">
+            <div className="flex items-center gap-2 mb-1">
+              <Coins className="w-4 h-4 text-blue-400" />
+              <h3 className="text-lg font-bold">Boost Pack</h3>
+            </div>
+            <p className="text-xs text-white/50 mb-4">One-time purchase</p>
+            <div className="text-3xl font-black mb-1">$14</div>
+            <p className="text-xs text-white/50 mb-4">one-time, no subscription</p>
+            <ul className="space-y-2 mb-5 flex-1">
+              {["5 resume optimizations", "5 cover letters", "5 LinkedIn rewrites", "Credits never expire", "No recurring charges"].map((f, i) => (
+                <li key={i} className="flex items-start gap-2 text-xs">
+                  <Check className="w-3.5 h-3.5 text-green-400 flex-shrink-0 mt-0.5" />
+                  <span className="text-white/80">{f}</span>
+                </li>
+              ))}
+            </ul>
+            <button
+              onClick={() => checkout("boost")}
+              disabled={loading !== null}
+              className="w-full py-2.5 rounded-xl bg-white/10 border border-white/20 text-white font-bold text-sm hover:bg-white/15 transition disabled:opacity-50 flex items-center justify-center gap-1"
+            >
+              {loading === "boost" ? <Loader2 className="w-4 h-4 animate-spin" /> : "Buy Boost Pack"}
+            </button>
+          </div>
+
+          <div className="bg-gradient-to-br from-amber-400/10 to-pink-500/10 border-2 border-amber-400/50 rounded-2xl p-5 relative flex flex-col">
+            <span className="absolute -top-3 right-4 px-2.5 py-1 bg-gradient-to-r from-amber-400 to-pink-500 text-black text-xs font-black rounded-full">BEST VALUE</span>
+            <div className="flex items-center gap-2 mb-1">
+              <Crown className="w-4 h-4 text-amber-400" />
+              <h3 className="text-lg font-bold">Pro</h3>
+            </div>
+            <p className="text-xs text-white/50 mb-4">Serious job hunters</p>
+            <div className="text-3xl font-black mb-1 bg-gradient-to-r from-amber-300 to-pink-400 bg-clip-text text-transparent">$19</div>
+            <p className="text-xs text-white/50 mb-4">per month · cancel anytime</p>
+            <ul className="space-y-2 mb-5 flex-1">
+              {["Unlimited everything", "All 4 cover letter tones", "Priority AI processing", "Cancel anytime"].map((f, i) => (
+                <li key={i} className="flex items-start gap-2 text-xs">
+                  <Check className="w-3.5 h-3.5 text-green-400 flex-shrink-0 mt-0.5" />
+                  <span className="text-white/80">{f}</span>
+                </li>
+              ))}
+            </ul>
+            <button
+              onClick={() => checkout("pro")}
+              disabled={loading !== null}
+              className="w-full py-2.5 rounded-xl bg-gradient-to-r from-amber-400 to-pink-500 text-black font-bold text-sm hover:opacity-90 transition disabled:opacity-50 flex items-center justify-center gap-1"
+            >
+              {loading === "pro" ? <Loader2 className="w-4 h-4 animate-spin" /> : <><Crown className="w-4 h-4" /> Get Pro</>}
+            </button>
+          </div>
+        </div>
+
+        <p className="text-center text-xs text-white/40 mt-5">One landed interview pays for years.</p>
       </div>
     </div>
   );
@@ -309,34 +378,61 @@ export default function AppPage() {
   const [tab, setTab] = useState("resume");
   const [user, setUser] = useState(null);
   const [isPro, setIsPro] = useState(false);
+  const [credits, setCredits] = useState({ resume: 0, cover: 0, linkedin: 0 });
+  const [freeUsed, setFreeUsed] = useState({ resume: 0, cover: 0, linkedin: 0 });
   const [showUpgrade, setShowUpgrade] = useState(false);
   const [checkingAuth, setCheckingAuth] = useState(true);
-  const [usage, setUsage] = useState({});
   const router = useRouter();
   const supabase = createClient();
+
+  const loadAll = async (userId) => {
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("is_pro, credits_resume, credits_cover, credits_linkedin")
+      .eq("id", userId)
+      .single();
+
+    setIsPro(profile?.is_pro || false);
+    setCredits({
+      resume: profile?.credits_resume || 0,
+      cover: profile?.credits_cover || 0,
+      linkedin: profile?.credits_linkedin || 0,
+    });
+
+    if (!profile?.is_pro) {
+      const tools = ["resume", "cover", "linkedin"];
+      const counts = {};
+      for (const tool of tools) {
+        const { count } = await supabase
+          .from("tool_usage")
+          .select("*", { count: "exact", head: true })
+          .eq("user_id", userId)
+          .eq("tool", tool);
+        counts[tool] = count || 0;
+      }
+      setFreeUsed(counts);
+    }
+  };
 
   useEffect(() => {
     (async () => {
       const { data: { user } } = await supabase.auth.getUser();
       setUser(user);
-      if (user) {
-        const { data } = await supabase.from("profiles").select("is_pro").eq("id", user.id).single();
-        setIsPro(data?.is_pro || false);
-        setUsage(user.user_metadata?.usage || {});
-      }
+      if (user) await loadAll(user.id);
       setCheckingAuth(false);
 
-      if (new URLSearchParams(window.location.search).get("upgraded")) {
-        setTimeout(async () => {
-          const { data } = await supabase.from("profiles").select("is_pro").eq("id", user?.id).single();
-          setIsPro(data?.is_pro || false);
-        }, 2000);
+      const upgraded = new URLSearchParams(window.location.search).get("upgraded");
+      if (upgraded && user) {
+        setTimeout(() => loadAll(user.id), 2500);
       }
     })();
   }, []);
 
   const onNeedLogin = () => router.push("/login");
-  const onUse = (tool) => setUsage((u) => ({ ...u, [tool]: (u[tool] || 0) + 1 }));
+  const onUse = (tool) => {
+    setFreeUsed((u) => ({ ...u, [tool]: (u[tool] || 0) + 1 }));
+    setCredits((c) => ({ ...c, [tool]: Math.max(0, (c[tool] || 0) - (c[tool] > 0 ? 1 : 0)) }));
+  };
   const signOut = async () => {
     await supabase.auth.signOut();
     setUser(null); setIsPro(false);
@@ -349,9 +445,29 @@ export default function AppPage() {
     { id: "linkedin", label: "LinkedIn", icon: Linkedin },
   ];
 
+  const totalCredits = credits.resume + credits.cover + credits.linkedin;
+
   if (checkingAuth) {
     return <div className="min-h-screen bg-slate-950 flex items-center justify-center"><Loader2 className="w-6 h-6 text-white animate-spin" /></div>;
   }
+
+  const StatusBadge = () => {
+    if (isPro) {
+      return <span className="text-xs px-3 py-1.5 rounded-full bg-gradient-to-r from-amber-400/20 to-pink-500/20 border border-amber-400/50 text-amber-200 font-semibold flex items-center gap-1"><Crown className="w-3 h-3" /> Pro</span>;
+    }
+    if (totalCredits > 0) {
+      return (
+        <button onClick={() => setShowUpgrade(true)} className="text-xs px-3 py-1.5 rounded-full bg-blue-500/15 border border-blue-500/40 text-blue-200 font-semibold flex items-center gap-1 hover:bg-blue-500/25">
+          <Coins className="w-3 h-3" /> {totalCredits} credits
+        </button>
+      );
+    }
+    return (
+      <button onClick={() => setShowUpgrade(true)} className="text-xs px-3 py-1.5 rounded-lg bg-gradient-to-r from-amber-400 to-pink-500 text-black font-bold flex items-center gap-1">
+        <Crown className="w-3 h-3" /> Upgrade
+      </button>
+    );
+  };
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-indigo-950 text-white">
@@ -364,7 +480,7 @@ export default function AppPage() {
           <div className="flex items-center gap-2">
             {user ? (
               <>
-                {isPro ? <span className="text-xs px-3 py-1.5 rounded-full bg-gradient-to-r from-amber-400/20 to-pink-500/20 border border-amber-400/50 text-amber-200 font-semibold flex items-center gap-1"><Crown className="w-3 h-3" /> Pro</span> : <button onClick={() => setShowUpgrade(true)} className="text-xs px-3 py-1.5 rounded-lg bg-gradient-to-r from-amber-400 to-pink-500 text-black font-bold flex items-center gap-1"><Crown className="w-3 h-3" /> Go Pro</button>}
+                <StatusBadge />
                 <button onClick={signOut} className="text-xs p-1.5 rounded-lg bg-white/5 hover:bg-white/10"><LogOut className="w-3.5 h-3.5" /></button>
               </>
             ) : (
@@ -389,9 +505,9 @@ export default function AppPage() {
             {tab === "linkedin" && "Headlines & About sections that attract recruiters."}
           </p>
         </div>
-        {tab === "resume" && <ResumeOptimizer isPro={isPro} onUpgrade={() => setShowUpgrade(true)} onNeedLogin={onNeedLogin} usage={usage} onUse={onUse} />}
-        {tab === "cover" && <CoverLetter isPro={isPro} onUpgrade={() => setShowUpgrade(true)} onNeedLogin={onNeedLogin} usage={usage} onUse={onUse} />}
-        {tab === "linkedin" && <LinkedInRewriter isPro={isPro} onUpgrade={() => setShowUpgrade(true)} onNeedLogin={onNeedLogin} usage={usage} onUse={onUse} />}
+        {tab === "resume" && <ResumeOptimizer isPro={isPro} credits={credits.resume} freeUsed={freeUsed.resume} onUpgrade={() => setShowUpgrade(true)} onNeedLogin={onNeedLogin} onUse={onUse} />}
+        {tab === "cover" && <CoverLetter isPro={isPro} credits={credits.cover} freeUsed={freeUsed.cover} onUpgrade={() => setShowUpgrade(true)} onNeedLogin={onNeedLogin} onUse={onUse} />}
+        {tab === "linkedin" && <LinkedInRewriter isPro={isPro} credits={credits.linkedin} freeUsed={freeUsed.linkedin} onUpgrade={() => setShowUpgrade(true)} onNeedLogin={onNeedLogin} onUse={onUse} />}
       </div>
 
       {showUpgrade && <UpgradeModal onClose={() => setShowUpgrade(false)} />}
