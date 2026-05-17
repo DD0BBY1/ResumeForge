@@ -22,18 +22,15 @@ export async function POST(request) {
     .eq("id", user.id)
     .single();
 
-  const { prompt, tool, maxTokens = 4000 } = await request.json();
+  const { prompt, tool, maxTokens = 4000, title = "" } = await request.json();
   const creditField = CREDIT_FIELDS[tool];
 
-  // Pro = unlimited, skip all checks
   if (!profile?.is_pro) {
     const credits = profile?.[creditField] || 0;
 
-    // Has credits? consume one and proceed
     if (credits > 0) {
-      // Credits will be decremented after successful generation
+      // proceed
     } else {
-      // No credits — check free trial usage
       const { count } = await supabase
         .from("tool_usage")
         .select("*", { count: "exact", head: true })
@@ -59,10 +56,24 @@ export async function POST(request) {
     });
     const text = message.content.map((c) => c.text || "").join("\n");
 
-    // Record successful use
+    // Record usage tracking
     await supabase.from("tool_usage").insert({ user_id: user.id, tool });
 
-    // Decrement credit if user has them (not Pro and not free trial)
+    // Parse and save to history
+    let parsedResult = null;
+    try {
+      parsedResult = JSON.parse(text.replace(/```json|```/g, "").trim());
+      await supabase.from("generations").insert({
+        user_id: user.id,
+        tool,
+        title: title.slice(0, 200) || `${tool} generation`,
+        result: parsedResult,
+      });
+    } catch (parseErr) {
+      console.error("Failed to parse/save generation:", parseErr);
+    }
+
+    // Decrement credit if user has them
     if (!profile?.is_pro && (profile?.[creditField] || 0) > 0) {
       await supabase
         .from("profiles")
