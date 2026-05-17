@@ -1,6 +1,8 @@
 import Stripe from "stripe";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 
+const CREDITS_PER_PACK = 5; // 5 of each tool
+
 export async function POST(request) {
   const body = await request.text();
   const sig = request.headers.get("stripe-signature");
@@ -25,12 +27,35 @@ export async function POST(request) {
   if (event.type === "checkout.session.completed") {
     const session = event.data.object;
     const userId = session.metadata?.user_id || session.client_reference_id;
-    if (userId) {
+    const plan = session.metadata?.plan;
+
+    if (!userId) return Response.json({ received: true });
+
+    if (plan === "boost") {
+      // One-time pack: ADD credits to existing balance
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("credits_resume, credits_cover, credits_linkedin")
+        .eq("id", userId)
+        .single();
+
+      await supabase
+        .from("profiles")
+        .update({
+          credits_resume: (profile?.credits_resume || 0) + CREDITS_PER_PACK,
+          credits_cover: (profile?.credits_cover || 0) + CREDITS_PER_PACK,
+          credits_linkedin: (profile?.credits_linkedin || 0) + CREDITS_PER_PACK,
+          stripe_customer_id: session.customer,
+        })
+        .eq("id", userId);
+    } else if (plan === "pro") {
+      // Subscription: set is_pro = true
       await supabase
         .from("profiles")
         .update({
           is_pro: true,
           stripe_customer_id: session.customer,
+          stripe_price_id: process.env.STRIPE_PRICE_ID_PRO,
         })
         .eq("id", userId);
     }
@@ -40,7 +65,7 @@ export async function POST(request) {
     const sub = event.data.object;
     await supabase
       .from("profiles")
-      .update({ is_pro: false })
+      .update({ is_pro: false, stripe_price_id: null })
       .eq("stripe_customer_id", sub.customer);
   }
 
