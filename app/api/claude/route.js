@@ -1,6 +1,13 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { createClient } from "@/lib/supabase-server";
 
+const FREE_TRIAL_USES = 1;
+const CREDIT_FIELDS = {
+  resume: "credits_resume",
+  cover: "credits_cover",
+  linkedin: "credits_linkedin",
+};
+
 export async function POST(request) {
   const supabase = createClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -11,21 +18,35 @@ export async function POST(request) {
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("is_pro")
+    .select("is_pro, credits_resume, credits_cover, credits_linkedin")
     .eq("id", user.id)
     .single();
 
   const { prompt, tool, maxTokens = 4000 } = await request.json();
+  const creditField = CREDIT_FIELDS[tool];
 
-  // Free users: 1 use per tool, tracked in user_metadata
+  // Pro = unlimited, skip all checks
   if (!profile?.is_pro) {
-    const usage = user.user_metadata?.usage || {};
-    if ((usage[tool] || 0) >= 1) {
-      return Response.json({ error: "upgrade_required" }, { status: 402 });
+    const credits = profile?.[creditField] || 0;
+
+    // Has credits? consume one and proceed
+    if (credits > 0) {
+      // Credits will be decremented after successful generation
+    } else {
+      // No credits — check free trial usage
+      const { count } = await supabase
+        .from("tool_usage")
+        .select("*", { count: "exact", head: true })
+        .eq("user_id", user.id)
+        .eq("tool", tool);
+
+      if ((count || 0) >= FREE_TRIAL_USES) {
+        return Response.json({
+          error: "upgrade_required",
+          credits: 0,
+        }, { status: 402 });
+      }
     }
-    await supabase.auth.updateUser({
-      data: { usage: { ...usage, [tool]: (usage[tool] || 0) + 1 } },
-    });
   }
 
   const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -37,6 +58,18 @@ export async function POST(request) {
       messages: [{ role: "user", content: prompt }],
     });
     const text = message.content.map((c) => c.text || "").join("\n");
+
+    // Record successful use
+    await supabase.from("tool_usage").insert({ user_id: user.id, tool });
+
+    // Decrement credit if user has them (not Pro and not free trial)
+    if (!profile?.is_pro && (profile?.[creditField] || 0) > 0) {
+      await supabase
+        .from("profiles")
+        .update({ [creditField]: profile[creditField] - 1 })
+        .eq("id", user.id);
+    }
+
     return Response.json({ text });
   } catch (err) {
     console.error(err);
