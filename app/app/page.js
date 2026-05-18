@@ -31,17 +31,21 @@ function downloadAsPDF(title, content) {
   let inList = false;
   let nameFound = false;
   let nameLine = "";
+  let prevWasEmpty = false;
 
   for (let i = 0; i < lines.length; i++) {
     const trimmed = lines[i].trim();
 
     if (!trimmed) {
       if (inList) { html += "</ul>"; inList = false; }
-      html += '<div class="spacer"></div>';
+      // Only add spacer if previous wasn't already empty (prevents stacked blank space)
+      if (!prevWasEmpty) html += '<div class="spacer"></div>';
+      prevWasEmpty = true;
       continue;
     }
+    prevWasEmpty = false;
 
-    // First non-bullet short line = name (becomes H1)
+    // First non-bullet line = name (becomes H1)
     if (!nameFound && trimmed.length < 60 && !/^[•\-*]/.test(trimmed)) {
       nameFound = true;
       nameLine = trimmed;
@@ -49,14 +53,14 @@ function downloadAsPDF(title, content) {
       continue;
     }
 
-    // Contact line (within first 5 lines, has @ or | or phone)
+    // Contact line (within first 5 lines, has @ or | or phone number)
     if (nameFound && i < 5 && (/[@|]/.test(trimmed) || /\d{3}[-.\s]?\d{3}[-.\s]?\d{4}/.test(trimmed))) {
       html += `<p class="contact">${escapeHTML(trimmed)}</p>`;
       continue;
     }
 
-    // All-caps section header
-    if (trimmed === trimmed.toUpperCase() && trimmed.length < 50 && /[A-Z]/.test(trimmed) && !/[•\-]/.test(trimmed)) {
+    // All-caps section header (must be >3 chars, all caps, no bullets)
+    if (trimmed === trimmed.toUpperCase() && trimmed.length >= 4 && trimmed.length < 50 && /[A-Z]{3,}/.test(trimmed) && !/[•\-]/.test(trimmed)) {
       if (inList) { html += "</ul>"; inList = false; }
       html += `<h2>${escapeHTML(trimmed)}</h2>`;
       continue;
@@ -69,8 +73,8 @@ function downloadAsPDF(title, content) {
       continue;
     }
 
-    // Job titles or dates
-    if (trimmed.includes("—") || trimmed.includes(" - ") || trimmed.includes(" at ") || /\d{4}/.test(trimmed)) {
+    // Job title or date line
+    if (trimmed.includes("—") || trimmed.includes(" - ") || trimmed.includes(" at ") || /\b(20\d{2}|19\d{2}|present)\b/i.test(trimmed)) {
       if (inList) { html += "</ul>"; inList = false; }
       const isDates = /\b(20\d{2}|19\d{2}|present)\b/i.test(trimmed) && trimmed.length < 40;
       html += isDates ? `<p class="dates">${escapeHTML(trimmed)}</p>` : `<p class="role">${escapeHTML(trimmed)}</p>`;
@@ -88,16 +92,16 @@ function downloadAsPDF(title, content) {
 <style>
 @page { margin: 0.6in; size: letter; }
 * { box-sizing: border-box; }
-body { font-family: 'Calibri', 'Helvetica Neue', Arial, sans-serif; font-size: 10.5pt; line-height: 1.45; color: #1a1a1a; margin: 0; padding: 0; }
-h1 { font-size: 22pt; margin: 0 0 4px 0; font-weight: 700; letter-spacing: 0.5px; color: #0a0a0a; }
-.contact { font-size: 10pt; color: #555; margin: 0 0 16px 0; border-bottom: 1px solid #d4d4d4; padding-bottom: 12px; }
-h2 { font-size: 11.5pt; margin: 18px 0 8px 0; font-weight: 700; text-transform: uppercase; letter-spacing: 1.2px; color: #0a0a0a; border-bottom: 1.5px solid #0a0a0a; padding-bottom: 3px; }
-.role { font-weight: 600; margin: 10px 0 2px 0; font-size: 11pt; }
-.dates { font-size: 9.5pt; color: #666; margin: 0 0 6px 0; font-style: italic; }
-p { margin: 4px 0; }
-ul { margin: 4px 0 8px 0; padding-left: 18px; }
-li { margin: 2px 0; line-height: 1.4; }
-.spacer { height: 4px; }
+body { font-family: 'Calibri', 'Helvetica Neue', Arial, sans-serif; font-size: 10.5pt; line-height: 1.4; color: #1a1a1a; margin: 0; padding: 0; }
+h1 { font-size: 22pt; margin: 0 0 2px 0; font-weight: 700; letter-spacing: 0.5px; color: #0a0a0a; }
+.contact { font-size: 10pt; color: #555; margin: 0 0 14px 0; border-bottom: 1.5px solid #0a0a0a; padding-bottom: 10px; }
+h2 { font-size: 11.5pt; margin: 16px 0 6px 0; font-weight: 700; text-transform: uppercase; letter-spacing: 1.2px; color: #0a0a0a; border-bottom: 1.5px solid #0a0a0a; padding-bottom: 2px; }
+.role { font-weight: 600; margin: 8px 0 0 0; font-size: 11pt; }
+.dates { font-size: 9.5pt; color: #666; margin: 0 0 4px 0; font-style: italic; }
+p { margin: 3px 0; }
+ul { margin: 2px 0 6px 0; padding-left: 18px; }
+li { margin: 1px 0; line-height: 1.35; }
+.spacer { height: 2px; }
 @media print { body { padding: 0; } }
 </style></head><body>
 ${html}
