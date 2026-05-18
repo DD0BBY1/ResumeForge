@@ -134,13 +134,40 @@ function CopyBtn({ text }) {
 }
 
 function DownloadBtn({ title, content }) {
+  const [showTip, setShowTip] = useState(false);
+
+  const handleClick = () => {
+    // Show tip the first time per session
+    const seen = sessionStorage.getItem("pdf_tip_seen");
+    if (!seen) {
+      setShowTip(true);
+      sessionStorage.setItem("pdf_tip_seen", "1");
+      setTimeout(() => {
+        downloadAsPDF(title, content);
+        setShowTip(false);
+      }, 3500);
+    } else {
+      downloadAsPDF(title, content);
+    }
+  };
+
   return (
-    <button
-      onClick={() => downloadAsPDF(title, content)}
-      className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-amber-400/20 border border-amber-400/30 text-amber-200 hover:bg-amber-400/30 transition"
-    >
-      <Download className="w-3.5 h-3.5" /> PDF
-    </button>
+    <>
+      <button
+        onClick={handleClick}
+        className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-amber-400/20 border border-amber-400/30 text-amber-200 hover:bg-amber-400/30 transition"
+      >
+        <Download className="w-3.5 h-3.5" /> PDF
+      </button>
+      {showTip && (
+        <div className="fixed bottom-6 right-6 z-50 max-w-xs bg-slate-900 border border-amber-400/50 rounded-2xl p-4 shadow-2xl animate-pulse">
+          <div className="text-xs font-bold text-amber-300 mb-1 uppercase tracking-wider">💡 Quick tip</div>
+          <p className="text-sm text-white/90 leading-snug">
+            In the print dialog, click <b>More settings</b> → uncheck <b>"Headers and footers"</b> for a cleaner PDF.
+          </p>
+        </div>
+      )}
+    </>
   );
 }
 
