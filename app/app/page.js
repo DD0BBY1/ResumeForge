@@ -106,9 +106,9 @@ function DownloadBtn({ title, content }) {
       </button>
       {showTip && (
         <div className="fixed bottom-6 right-6 z-50 max-w-xs bg-slate-900 border border-amber-400/50 rounded-2xl p-4 shadow-2xl">
-          <div className="text-xs font-bold text-amber-300 mb-1 uppercase tracking-wider">Quick tip</div>
+          <div className="text-xs font-bold text-amber-300 mb-1 uppercase tracking-wider">💡 Quick tip</div>
           <p className="text-sm text-white/90 leading-snug">
-            In the print dialog, click <b>More settings</b> then uncheck <b>"Headers and footers"</b> for a cleaner PDF.
+            In the print dialog, click <b>More settings</b> → uncheck <b>"Headers and footers"</b> for a cleaner PDF.
           </p>
         </div>
       )}
