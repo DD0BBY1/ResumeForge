@@ -19,43 +19,93 @@ async function callClaudeAPI(prompt, tool, maxTokens = 4000, title = "") {
   if (data.error) throw new Error(data.error);
   return { text: data.text };
 }
-
 function downloadAsPDF(title, content) {
   const win = window.open("", "_blank");
   if (!win) return alert("Please allow popups to download.");
-  win.document.write(`
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <title>${title}</title>
-      <style>
-        @page { margin: 0.75in; }
-        body {
-          font-family: Georgia, 'Times New Roman', serif;
-          font-size: 11pt;
-          line-height: 1.5;
-          color: #1a1a1a;
-          max-width: 700px;
-          margin: 0 auto;
-          padding: 20px;
-          white-space: pre-wrap;
-        }
-        h1 { font-size: 16pt; margin-bottom: 8px; }
-        .meta { color: #666; font-size: 9pt; margin-bottom: 24px; }
-        .content { white-space: pre-wrap; }
-        @media print {
-          body { padding: 0; }
-        }
-      </style>
-    </head>
-    <body>
-      <div class="content">${content.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</div>
-      <script>
-        window.onload = () => { window.print(); }
-      </script>
-    </body>
-    </html>
-  `);
+
+  const escapeHTML = (s) =>
+    s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+
+  const lines = content.split("\n");
+  let html = "";
+  let inList = false;
+  let nameFound = false;
+  let nameLine = "";
+
+  for (let i = 0; i < lines.length; i++) {
+    const trimmed = lines[i].trim();
+
+    if (!trimmed) {
+      if (inList) { html += "</ul>"; inList = false; }
+      html += '<div class="spacer"></div>';
+      continue;
+    }
+
+    // First non-bullet short line = name (becomes H1)
+    if (!nameFound && trimmed.length < 60 && !/^[•\-*]/.test(trimmed)) {
+      nameFound = true;
+      nameLine = trimmed;
+      html += `<h1>${escapeHTML(trimmed)}</h1>`;
+      continue;
+    }
+
+    // Contact line (within first 5 lines, has @ or | or phone)
+    if (nameFound && i < 5 && (/[@|]/.test(trimmed) || /\d{3}[-.\s]?\d{3}[-.\s]?\d{4}/.test(trimmed))) {
+      html += `<p class="contact">${escapeHTML(trimmed)}</p>`;
+      continue;
+    }
+
+    // All-caps section header
+    if (trimmed === trimmed.toUpperCase() && trimmed.length < 50 && /[A-Z]/.test(trimmed) && !/[•\-]/.test(trimmed)) {
+      if (inList) { html += "</ul>"; inList = false; }
+      html += `<h2>${escapeHTML(trimmed)}</h2>`;
+      continue;
+    }
+
+    // Bullet
+    if (/^[•\-*]/.test(trimmed)) {
+      if (!inList) { html += '<ul>'; inList = true; }
+      html += `<li>${escapeHTML(trimmed.replace(/^[•\-*]\s*/, ""))}</li>`;
+      continue;
+    }
+
+    // Job titles or dates
+    if (trimmed.includes("—") || trimmed.includes(" - ") || trimmed.includes(" at ") || /\d{4}/.test(trimmed)) {
+      if (inList) { html += "</ul>"; inList = false; }
+      const isDates = /\b(20\d{2}|19\d{2}|present)\b/i.test(trimmed) && trimmed.length < 40;
+      html += isDates ? `<p class="dates">${escapeHTML(trimmed)}</p>` : `<p class="role">${escapeHTML(trimmed)}</p>`;
+      continue;
+    }
+
+    if (inList) { html += "</ul>"; inList = false; }
+    html += `<p>${escapeHTML(trimmed)}</p>`;
+  }
+  if (inList) html += "</ul>";
+
+  const doc = `<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<title>${nameLine ? escapeHTML(nameLine) : "Document"}</title>
+<style>
+@page { margin: 0.6in; size: letter; }
+* { box-sizing: border-box; }
+body { font-family: 'Calibri', 'Helvetica Neue', Arial, sans-serif; font-size: 10.5pt; line-height: 1.45; color: #1a1a1a; margin: 0; padding: 0; }
+h1 { font-size: 22pt; margin: 0 0 4px 0; font-weight: 700; letter-spacing: 0.5px; color: #0a0a0a; }
+.contact { font-size: 10pt; color: #555; margin: 0 0 16px 0; border-bottom: 1px solid #d4d4d4; padding-bottom: 12px; }
+h2 { font-size: 11.5pt; margin: 18px 0 8px 0; font-weight: 700; text-transform: uppercase; letter-spacing: 1.2px; color: #0a0a0a; border-bottom: 1.5px solid #0a0a0a; padding-bottom: 3px; }
+.role { font-weight: 600; margin: 10px 0 2px 0; font-size: 11pt; }
+.dates { font-size: 9.5pt; color: #666; margin: 0 0 6px 0; font-style: italic; }
+p { margin: 4px 0; }
+ul { margin: 4px 0 8px 0; padding-left: 18px; }
+li { margin: 2px 0; line-height: 1.4; }
+.spacer { height: 4px; }
+@media print { body { padding: 0; } }
+</style></head><body>
+${html}
+<script>window.onload=()=>setTimeout(()=>window.print(),100);</script>
+</body></html>`;
+
+  win.document.open();
+  win.document.write(doc);
   win.document.close();
 }
 
