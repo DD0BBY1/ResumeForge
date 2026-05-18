@@ -37,10 +37,10 @@ function downloadAsPDF(title, content) {
       continue;
     }
 
-    // Skip dividers/separator lines (just dashes, asterisks, or underscores)
+    // Skip divider lines
     if (/^[-_=*]{3,}$/.test(trimmed)) continue;
 
-    // First non-bullet line = name (becomes H1)
+    // First non-bullet line = name (H1)
     if (!nameFound && trimmed.length < 60 && !/^[•\-*]/.test(trimmed)) {
       nameFound = true;
       nameLine = trimmed;
@@ -48,13 +48,13 @@ function downloadAsPDF(title, content) {
       continue;
     }
 
-    // Contact line (within first 5 lines, has @ or | or phone)
+    // Contact line (first 5 lines, has @ or | or phone)
     if (nameFound && i < 5 && (/[@|]/.test(trimmed) || /\d{3}[-.\s]?\d{3}[-.\s]?\d{4}/.test(trimmed))) {
       html += `<p class="contact">${escapeHTML(trimmed)}</p>`;
       continue;
     }
 
-    // All-caps section header (4+ chars, multi-letter, no bullets)
+    // All-caps section header
     if (trimmed === trimmed.toUpperCase() && trimmed.length >= 4 && trimmed.length < 50 && /[A-Z]{3,}/.test(trimmed) && !/[•\-]/.test(trimmed)) {
       if (inList) { html += "</ul>"; inList = false; }
       html += `<h2>${escapeHTML(trimmed)}</h2>`;
@@ -68,7 +68,7 @@ function downloadAsPDF(title, content) {
       continue;
     }
 
-    // Job titles or date lines
+    // Job title or date line
     if (trimmed.includes("—") || trimmed.includes(" - ") || trimmed.includes(" at ") || /\b(20\d{2}|19\d{2}|present)\b/i.test(trimmed)) {
       if (inList) { html += "</ul>"; inList = false; }
       const isDates = /\b(20\d{2}|19\d{2}|present)\b/i.test(trimmed) && trimmed.length < 40;
@@ -81,37 +81,77 @@ function downloadAsPDF(title, content) {
   }
   if (inList) html += "</ul>";
 
-  // Build the document for PDF rendering (no print dialog)
+  // Build the document - critical: no margin/padding on the outer container
   const wrapper = document.createElement("div");
+  wrapper.style.cssText = "position: fixed; left: -10000px; top: 0; width: 8.5in; background: white;";
   wrapper.innerHTML = `
-    <div id="pdf-content" style="
-      font-family: 'Calibri', 'Helvetica Neue', Arial, sans-serif;
-      font-size: 10.5pt;
-      line-height: 1.4;
-      color: #1a1a1a;
-      padding: 0.5in;
-      width: 8.5in;
-      box-sizing: border-box;
-      background: white;
-    ">
-      <style>
-        #pdf-content h1 { font-size: 22pt; margin: 0 0 2px 0; font-weight: 700; letter-spacing: 0.5px; color: #0a0a0a; }
-        #pdf-content .contact { font-size: 10pt; color: #555; margin: 0 0 14px 0; border-bottom: 1.5px solid #0a0a0a; padding-bottom: 10px; }
-        #pdf-content h2 { font-size: 11.5pt; margin: 16px 0 6px 0; font-weight: 700; text-transform: uppercase; letter-spacing: 1.2px; color: #0a0a0a; border-bottom: 1.5px solid #0a0a0a; padding-bottom: 2px; }
-        #pdf-content .role { font-weight: 600; margin: 8px 0 0 0; font-size: 11pt; }
-        #pdf-content .dates { font-size: 9.5pt; color: #666; margin: 0 0 4px 0; font-style: italic; }
-        #pdf-content p { margin: 3px 0; }
-        #pdf-content ul { margin: 2px 0 6px 0; padding-left: 18px; }
-        #pdf-content li { margin: 1px 0; line-height: 1.35; }
-      </style>
-      ${html}
-    </div>
+    <style>
+      .pdf-doc {
+        font-family: 'Calibri', 'Helvetica Neue', Arial, sans-serif;
+        font-size: 10.5pt;
+        line-height: 1.4;
+        color: #1a1a1a;
+        background: white;
+        width: 100%;
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+      .pdf-doc h1 {
+        font-size: 22pt;
+        margin: 0 0 4px 0;
+        padding: 0;
+        font-weight: 700;
+        letter-spacing: 0.5px;
+        color: #0a0a0a;
+        line-height: 1.1;
+      }
+      .pdf-doc .contact {
+        font-size: 10pt;
+        color: #555;
+        margin: 0 0 16px 0;
+        border-bottom: 1.5px solid #0a0a0a;
+        padding-bottom: 10px;
+      }
+      .pdf-doc h2 {
+        font-size: 11.5pt;
+        margin: 14px 0 6px 0;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 1.2px;
+        color: #0a0a0a;
+        border-bottom: 1.5px solid #0a0a0a;
+        padding-bottom: 2px;
+        page-break-after: avoid;
+      }
+      .pdf-doc .role {
+        font-weight: 600;
+        margin: 8px 0 0 0;
+        font-size: 11pt;
+        page-break-after: avoid;
+      }
+      .pdf-doc .dates {
+        font-size: 9.5pt;
+        color: #666;
+        margin: 0 0 4px 0;
+        font-style: italic;
+        page-break-after: avoid;
+      }
+      .pdf-doc p { margin: 3px 0; }
+      .pdf-doc ul {
+        margin: 4px 0 8px 0;
+        padding-left: 22px;
+        list-style-type: disc;
+        list-style-position: outside;
+      }
+      .pdf-doc li {
+        margin: 2px 0;
+        line-height: 1.4;
+        display: list-item;
+      }
+    </style>
+    <div class="pdf-doc">${html}</div>
   `;
-
-  // Off-screen so user doesn't see the rendering
-  wrapper.style.position = "fixed";
-  wrapper.style.left = "-10000px";
-  wrapper.style.top = "0";
   document.body.appendChild(wrapper);
 
   // Load html2pdf from CDN if not already loaded
@@ -129,14 +169,14 @@ function downloadAsPDF(title, content) {
   loadScript().then(() => {
     window.html2pdf()
       .set({
-        margin: 0,
+        margin: [0.5, 0.5, 0.5, 0.5], // top, left, bottom, right in inches
         filename: filename,
         image: { type: "jpeg", quality: 0.98 },
         html2canvas: { scale: 2, useCORS: true, backgroundColor: "#ffffff" },
         jsPDF: { unit: "in", format: "letter", orientation: "portrait" },
-        pagebreak: { mode: ["avoid-all", "css", "legacy"] },
+        pagebreak: { mode: ["css", "legacy"] },
       })
-      .from(wrapper.querySelector("#pdf-content"))
+      .from(wrapper.querySelector(".pdf-doc"))
       .save()
       .then(() => {
         document.body.removeChild(wrapper);
@@ -150,10 +190,7 @@ function downloadAsPDF(title, content) {
     document.body.removeChild(wrapper);
     alert("Failed to load PDF library. Please check your connection.");
   });
-}
-function copyText(text) {
-  navigator.clipboard.writeText(text);
-}
+}}
 
 function CopyBtn({ text }) {
   const [copied, setCopied] = useState(false);
