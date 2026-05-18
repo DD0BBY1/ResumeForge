@@ -172,8 +172,27 @@ function CopyBtn({ text }) {
 }
 
 function DownloadBtn({ title, content }) {
-  const [showTip, setShowTip] = useState(false);
+  const [loading, setLoading] = useState(false);
 
+  const handleClick = async () => {
+    setLoading(true);
+    try {
+      await downloadAsPDF(title, content);
+    } finally {
+      setTimeout(() => setLoading(false), 1500);
+    }
+  };
+
+  return (
+    <button
+      onClick={handleClick}
+      disabled={loading}
+      className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-amber-400/20 border border-amber-400/30 text-amber-200 hover:bg-amber-400/30 transition disabled:opacity-50"
+    >
+      {loading ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Generating</> : <><Download className="w-3.5 h-3.5" /> PDF</>}
+    </button>
+  );
+}
   const handleClick = () => {
     // Show tip the first time per session
     const seen = sessionStorage.getItem("pdf_tip_seen");
