@@ -21,114 +21,42 @@ async function callClaudeAPI(prompt, tool, maxTokens = 4000, title = "") {
 }
 
 function downloadAsPDF(title, content) {
-  const escapeHTML = (s) =>
-    s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-
-  const lines = content.split("\n");
-  let html = "";
-  let inList = false;
-  let nameFound = false;
-  let nameLine = "";
-
-  for (let i = 0; i < lines.length; i++) {
-    const trimmed = lines[i].trim();
-
-    if (!trimmed) {
-      if (inList) { html += "</ul>"; inList = false; }
-      continue;
-    }
-
-    if (/^[-_=*]{3,}$/.test(trimmed)) continue;
-
-    if (!nameFound && trimmed.length < 60 && !/^[•\-*]/.test(trimmed)) {
-      nameFound = true;
-      nameLine = trimmed;
-      html += `<h1>${escapeHTML(trimmed)}</h1>`;
-      continue;
-    }
-
-    if (nameFound && i < 5 && (/[@|]/.test(trimmed) || /\d{3}[-.\s]?\d{3}[-.\s]?\d{4}/.test(trimmed))) {
-      html += `<p class="contact">${escapeHTML(trimmed)}</p>`;
-      continue;
-    }
-
-    if (trimmed === trimmed.toUpperCase() && trimmed.length >= 4 && trimmed.length < 50 && /[A-Z]{3,}/.test(trimmed) && !/[•\-]/.test(trimmed)) {
-      if (inList) { html += "</ul>"; inList = false; }
-      html += `<h2>${escapeHTML(trimmed)}</h2>`;
-      continue;
-    }
-
-    if (/^[•\-*]/.test(trimmed)) {
-      if (!inList) { html += '<ul>'; inList = true; }
-      html += `<li>${escapeHTML(trimmed.replace(/^[•\-*]\s*/, ""))}</li>`;
-      continue;
-    }
-
-    if (trimmed.includes("—") || trimmed.includes(" - ") || trimmed.includes(" at ") || /\b(20\d{2}|19\d{2}|present)\b/i.test(trimmed)) {
-      if (inList) { html += "</ul>"; inList = false; }
-      const isDates = /\b(20\d{2}|19\d{2}|present)\b/i.test(trimmed) && trimmed.length < 40;
-      html += isDates ? `<p class="dates">${escapeHTML(trimmed)}</p>` : `<p class="role">${escapeHTML(trimmed)}</p>`;
-      continue;
-    }
-
-    if (inList) { html += "</ul>"; inList = false; }
-    html += `<p>${escapeHTML(trimmed)}</p>`;
-  }
-  if (inList) html += "</ul>";
-
-  const wrapper = document.createElement("div");
-  wrapper.style.cssText = "position: fixed; left: -10000px; top: 0; width: 8.5in; background: white;";
-  wrapper.innerHTML = `
-    <style>
-      .pdf-doc { font-family: 'Calibri', 'Helvetica Neue', Arial, sans-serif; font-size: 10.5pt; line-height: 1.4; color: #1a1a1a; background: white; width: 100%; box-sizing: border-box; margin: 0; padding: 0; }
-      .pdf-doc h1 { font-size: 22pt; margin: 0 0 4px 0; padding: 0; font-weight: 700; letter-spacing: 0.5px; color: #0a0a0a; line-height: 1.1; }
-      .pdf-doc .contact { font-size: 10pt; color: #555; margin: 0 0 16px 0; border-bottom: 1.5px solid #0a0a0a; padding-bottom: 10px; }
-      .pdf-doc h2 { font-size: 11.5pt; margin: 14px 0 6px 0; font-weight: 700; text-transform: uppercase; letter-spacing: 1.2px; color: #0a0a0a; border-bottom: 1.5px solid #0a0a0a; padding-bottom: 2px; page-break-after: avoid; }
-      .pdf-doc .role { font-weight: 600; margin: 8px 0 0 0; font-size: 11pt; page-break-after: avoid; }
-      .pdf-doc .dates { font-size: 9.5pt; color: #666; margin: 0 0 4px 0; font-style: italic; page-break-after: avoid; }
-      .pdf-doc p { margin: 3px 0; }
-      .pdf-doc ul { margin: 4px 0 8px 0; padding-left: 22px; list-style-type: disc; list-style-position: outside; }
-      .pdf-doc li { margin: 2px 0; line-height: 1.4; display: list-item; }
-    </style>
-    <div class="pdf-doc">${html}</div>
-  `;
-  document.body.appendChild(wrapper);
-
-  const loadScript = () => new Promise((resolve, reject) => {
-    if (window.html2pdf) return resolve();
-    const script = document.createElement("script");
-    script.src = "https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js";
-    script.onload = resolve;
-    script.onerror = reject;
-    document.head.appendChild(script);
-  });
-
-  const filename = (nameLine ? nameLine.replace(/\s+/g, "-") : title.replace(/\s+/g, "-")) + ".pdf";
-
-  loadScript().then(() => {
-    window.html2pdf()
-      .set({
-        margin: [0.5, 0.5, 0.5, 0.5],
-        filename: filename,
-        image: { type: "jpeg", quality: 0.98 },
-        html2canvas: { scale: 2, useCORS: true, backgroundColor: "#ffffff" },
-        jsPDF: { unit: "in", format: "letter", orientation: "portrait" },
-        pagebreak: { mode: ["css", "legacy"] },
-      })
-      .from(wrapper.querySelector(".pdf-doc"))
-      .save()
-      .then(() => {
-        document.body.removeChild(wrapper);
-      })
-      .catch((err) => {
-        console.error("PDF generation failed:", err);
-        document.body.removeChild(wrapper);
-        alert("PDF generation failed. Please try again.");
-      });
-  }).catch(() => {
-    document.body.removeChild(wrapper);
-    alert("Failed to load PDF library. Please check your connection.");
-  });
+  const win = window.open("", "_blank");
+  if (!win) return alert("Please allow popups to download.");
+  win.document.write(`
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <title>${title}</title>
+      <style>
+        @page { margin: 0.75in; }
+        body {
+          font-family: Georgia, 'Times New Roman', serif;
+          font-size: 11pt;
+          line-height: 1.5;
+          color: #1a1a1a;
+          max-width: 700px;
+          margin: 0 auto;
+          padding: 20px;
+          white-space: pre-wrap;
+        }
+        h1 { font-size: 16pt; margin-bottom: 8px; }
+        .meta { color: #666; font-size: 9pt; margin-bottom: 24px; }
+        .content { white-space: pre-wrap; }
+        @media print {
+          body { padding: 0; }
+        }
+      </style>
+    </head>
+    <body>
+      <div class="content">${content.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</div>
+      <script>
+        window.onload = () => { window.print(); }
+      </script>
+    </body>
+    </html>
+  `);
+  win.document.close();
 }
 
 function copyText(text) {
@@ -152,15 +80,41 @@ function CopyBtn({ text }) {
 }
 
 function DownloadBtn({ title, content }) {
-  const [loading, setLoading] = useState(false);
+  const [showTip, setShowTip] = useState(false);
 
-  const handleClick = async () => {
-    setLoading(true);
-    try {
-      await downloadAsPDF(title, content);
-    } finally {
-      setTimeout(() => setLoading(false), 1500);
+  const handleClick = () => {
+    const seen = sessionStorage.getItem("pdf_tip_seen");
+    if (!seen) {
+      setShowTip(true);
+      sessionStorage.setItem("pdf_tip_seen", "1");
+      setTimeout(() => {
+        downloadAsPDF(title, content);
+        setTimeout(() => setShowTip(false), 4000);
+      }, 1500);
+    } else {
+      downloadAsPDF(title, content);
     }
+  };
+
+  return (
+    <>
+      <button
+        onClick={handleClick}
+        className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-amber-400/20 border border-amber-400/30 text-amber-200 hover:bg-amber-400/30 transition"
+      >
+        <Download className="w-3.5 h-3.5" /> PDF
+      </button>
+      {showTip && (
+        <div className="fixed bottom-6 right-6 z-50 max-w-xs bg-slate-900 border border-amber-400/50 rounded-2xl p-4 shadow-2xl">
+          <div className="text-xs font-bold text-amber-300 mb-1 uppercase tracking-wider">💡 Quick tip</div>
+          <p className="text-sm text-white/90 leading-snug">
+            In the print dialog, click <b>More settings</b> → uncheck <b>"Headers and footers"</b> for a cleaner PDF.
+          </p>
+        </div>
+      )}
+    </>
+  );
+}
   };
 
   return (
