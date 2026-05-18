@@ -190,7 +190,7 @@ function downloadAsPDF(title, content) {
     document.body.removeChild(wrapper);
     alert("Failed to load PDF library. Please check your connection.");
   });
-}}
+}
 
 function CopyBtn({ text }) {
   const [copied, setCopied] = useState(false);
