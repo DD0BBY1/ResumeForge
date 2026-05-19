@@ -21,14 +21,12 @@ async function callClaudeAPI(prompt, tool, maxTokens = 4000, title = "") {
 }
 
 /* ============================================================
-   RESUME PDF — modern single-column, ATS-safe, recruiter-friendly
+   RESUME PDF — modern, ATS-safe, single-page optimized
    ============================================================ */
 function parseResumeContent(rawResume) {
-  // Split into sections by detecting common headings
   const lines = rawResume.split("\n").map(l => l.trim());
   const sectionPattern = /^(PROFESSIONAL SUMMARY|SUMMARY|OBJECTIVE|WORK EXPERIENCE|EXPERIENCE|EMPLOYMENT|EDUCATION|SKILLS|TECHNICAL SKILLS|CORE COMPETENCIES|CERTIFICATIONS|PROJECTS|ACHIEVEMENTS|AWARDS|VOLUNTEER|LANGUAGES|INTERESTS|REFERENCES)$/i;
 
-  // Pull header (first 1-3 lines as name + contact)
   let headerEnd = 0;
   for (let i = 0; i < Math.min(5, lines.length); i++) {
     if (sectionPattern.test(lines[i]) || (lines[i] === "" && i > 0)) {
@@ -42,7 +40,6 @@ function parseResumeContent(rawResume) {
   const name = headerLines[0] || "";
   const contact = headerLines.slice(1).join(" · ");
 
-  // Group the rest into sections
   const body = lines.slice(headerEnd);
   const sections = [];
   let current = null;
@@ -64,14 +61,16 @@ function buildResumeHTML({ name, contact, sections }, accent) {
   const headerLineColor = accent ? "#c2410c" : "#1f2937";
 
   const sectionsHTML = sections.map(s => {
+    // Check if this is the Skills section to use 2-column grid
+    const isSkills = /SKILLS|COMPETENCIES|LANGUAGES/i.test(s.title);
+
     const itemsHTML = s.content
       .map(line => {
-        if (!line) return '<div style="height:4pt;"></div>';
+        if (!line) return '<div style="height:3pt;"></div>';
         if (line.startsWith("•") || line.startsWith("-") || line.startsWith("*")) {
           const text = line.replace(/^[•\-*]\s*/, "");
           return `<div class="bullet"><span class="dot">•</span><span class="bullet-text">${escapeHTML(text)}</span></div>`;
         }
-        // Detect job title lines (often bold-worthy: contain dashes, em-dashes, "at", or are short)
         const looksLikeRole = line.length < 80 && (line.includes("—") || line.includes(" – ") || line.includes(" - ") || line.includes(" at ") || /\b(20\d{2}|19\d{2})\b/.test(line));
         if (looksLikeRole) {
           return `<div class="role-line">${escapeHTML(line)}</div>`;
@@ -84,7 +83,7 @@ function buildResumeHTML({ name, contact, sections }, accent) {
       <section class="resume-section">
         <h2 class="section-heading">${escapeHTML(s.title)}</h2>
         <div class="section-divider"></div>
-        <div class="section-body">${itemsHTML}</div>
+        <div class="section-body ${isSkills ? "skills-grid" : ""}">${itemsHTML}</div>
       </section>
     `;
   }).join("");
@@ -95,84 +94,79 @@ function buildResumeHTML({ name, contact, sections }, accent) {
 <meta charset="UTF-8">
 <title>${escapeHTML(name) || "Resume"}</title>
 <style>
-  @page { margin: 0.6in 0.7in; size: letter; }
+  @page { margin: 0.5in 0.6in; size: letter; }
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; }
   body {
     font-family: 'Helvetica Neue', 'Helvetica', 'Arial', sans-serif;
     color: #1a1a1a;
-    font-size: 10.5pt;
-    line-height: 1.45;
+    font-size: 10pt;
+    line-height: 1.35;
     -webkit-print-color-adjust: exact;
     print-color-adjust: exact;
   }
-  .resume-header {
-    margin-bottom: 14pt;
-  }
+  .resume-header { margin-bottom: 10pt; }
   .resume-name {
-    font-size: 24pt;
+    font-size: 22pt;
     font-weight: 700;
     color: ${accentColor};
     letter-spacing: -0.5pt;
-    margin: 0 0 4pt 0;
+    margin: 0 0 3pt 0;
     line-height: 1.1;
   }
   .resume-contact {
-    font-size: 9.5pt;
+    font-size: 9pt;
     color: #4b5563;
-    margin: 0 0 10pt 0;
+    margin: 0 0 8pt 0;
     font-weight: 400;
   }
   .header-divider {
     border: 0;
     border-top: 1.5pt solid ${headerLineColor};
-    margin: 0 0 12pt 0;
+    margin: 0 0 10pt 0;
   }
   .resume-section {
-    margin-bottom: 14pt;
+    margin-bottom: 10pt;
     page-break-inside: avoid;
   }
   .section-heading {
-    font-size: 10.5pt;
+    font-size: 10pt;
     font-weight: 700;
     color: ${accentColor};
     text-transform: uppercase;
     letter-spacing: 1.2pt;
-    margin: 0 0 3pt 0;
+    margin: 0 0 2pt 0;
   }
   .section-divider {
     border-top: 0.5pt solid #d1d5db;
-    margin-bottom: 7pt;
+    margin-bottom: 5pt;
   }
-  .section-body { }
   .role-line {
     font-weight: 600;
     color: #111827;
-    margin-top: 6pt;
-    margin-bottom: 2pt;
-    font-size: 10.5pt;
+    margin-top: 4pt;
+    margin-bottom: 1pt;
+    font-size: 10pt;
   }
-  .body-line {
-    margin-bottom: 3pt;
-  }
+  .body-line { margin-bottom: 2pt; }
   .bullet {
     display: flex;
-    margin-bottom: 3pt;
+    margin-bottom: 2pt;
     padding-left: 2pt;
   }
   .bullet .dot {
     flex-shrink: 0;
-    width: 12pt;
+    width: 11pt;
     color: ${accentColor};
     font-weight: 700;
   }
-  .bullet .bullet-text {
-    flex: 1;
-    text-align: left;
+  .bullet .bullet-text { flex: 1; text-align: left; }
+  .skills-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0 16pt;
   }
-  @media print {
-    body { font-size: 10.5pt; }
-  }
+  @media print { body { font-size: 10pt; } }
 </style>
 </head>
 <body>
@@ -188,17 +182,68 @@ function buildResumeHTML({ name, contact, sections }, accent) {
 }
 
 /* ============================================================
-   COVER LETTER PDF — matching letterhead
+   COVER LETTER PDF — matching letterhead with reliable fallback
    ============================================================ */
+function extractHeaderFromCoverLetter(content) {
+  // Try to extract name/contact from end of letter (Sincerely, Name, phone, email)
+  const lines = content.split("\n").map(l => l.trim());
+  // Find "Sincerely" or similar closing
+  let closingIdx = -1;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (/^(sincerely|regards|best|thank you|yours truly|respectfully)/i.test(lines[i])) {
+      closingIdx = i;
+      break;
+    }
+  }
+
+  if (closingIdx === -1) return null;
+
+  // Grab non-empty lines after closing
+  const sigLines = lines.slice(closingIdx + 1).filter(l => l.length > 0);
+  if (sigLines.length < 1) return null;
+
+  const name = sigLines[0];
+  const contactParts = sigLines.slice(1).filter(l => l.length > 0);
+  const contact = contactParts.join(" · ");
+  return { name, contact };
+}
+
 function buildCoverLetterHTML(content, accent, headerInfo) {
   const accentColor = accent ? "#c2410c" : "#000000";
   const headerLineColor = accent ? "#c2410c" : "#1f2937";
 
-  // Best effort: extract name/contact from headerInfo (we'll pass last-known from resume)
-  const name = headerInfo?.name || "";
-  const contact = headerInfo?.contact || "";
+  // Use provided headerInfo, OR fall back to extracting from the letter itself
+  let header = headerInfo;
+  if (!header || !header.name) {
+    header = extractHeaderFromCoverLetter(content);
+  }
 
-  const paragraphs = content.split(/\n\n+/).map(p => p.trim()).filter(Boolean);
+  const name = header?.name || "";
+  const contact = header?.contact || "";
+
+  // Strip the signature from the body if we extracted it (avoid duplicating name/contact)
+  let bodyContent = content;
+  if (header && name) {
+    // Remove signature block from body
+    const lines = bodyContent.split("\n");
+    let lastClosingIdx = -1;
+    for (let i = lines.length - 1; i >= 0; i--) {
+      if (/^(sincerely|regards|best|thank you|yours truly|respectfully)/i.test(lines[i].trim())) {
+        lastClosingIdx = i;
+        break;
+      }
+    }
+    if (lastClosingIdx > -1) {
+      // Keep "Sincerely," but strip the contact lines below
+      bodyContent = lines.slice(0, lastClosingIdx + 2).join("\n");
+      // +2 keeps "Sincerely," and the name. Remove just phone/email after.
+      // Actually, let's keep just up to the name, then the signature looks clean:
+      const truncated = lines.slice(0, lastClosingIdx + 1).concat([name]).join("\n");
+      bodyContent = truncated;
+    }
+  }
+
+  const paragraphs = bodyContent.split(/\n\n+/).map(p => p.trim()).filter(Boolean);
   const bodyHTML = paragraphs.map(p => `<p>${escapeHTML(p).replace(/\n/g, "<br>")}</p>`).join("");
 
   const headerBlock = name ? `
@@ -215,7 +260,7 @@ function buildCoverLetterHTML(content, accent, headerInfo) {
 <meta charset="UTF-8">
 <title>Cover Letter</title>
 <style>
-  @page { margin: 0.7in 0.8in; size: letter; }
+  @page { margin: 0.6in 0.7in; size: letter; }
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; }
   body {
@@ -226,13 +271,14 @@ function buildCoverLetterHTML(content, accent, headerInfo) {
     -webkit-print-color-adjust: exact;
     print-color-adjust: exact;
   }
-  .cl-header { margin-bottom: 24pt; }
+  .cl-header { margin-bottom: 22pt; }
   .cl-name {
     font-size: 22pt;
     font-weight: 700;
     color: ${accentColor};
     letter-spacing: -0.5pt;
     margin: 0 0 4pt 0;
+    line-height: 1.1;
   }
   .cl-contact {
     font-size: 9.5pt;
@@ -437,14 +483,14 @@ function ResumeOptimizer({ isPro, credits, freeUsed, onUpgrade, onNeedLogin, onU
 
     const titleHint = jobDesc.trim().split("\n")[0]?.slice(0, 80) || "Resume optimization";
 
-    const prompt = `You are an expert resume writer. Optimize this resume${jobDesc.trim() ? " for the target job" : ""}.
+    const prompt = `You are an expert resume writer. Optimize this resume${jobDesc.trim() ? " for the target job" : ""}. Aim for content that fits comfortably on ONE PAGE. Be concise. Limit Skills section to 8-12 most relevant items, not 15+.
 
 RESUME:
 ${resume}
 
 ${jobDesc.trim() ? `TARGET JOB:\n${jobDesc}\n` : ""}
 
-Return ONLY JSON (no markdown). For "optimizedResume": format as plain text with clear section headers in ALL CAPS (PROFESSIONAL SUMMARY, WORK EXPERIENCE, EDUCATION, SKILLS, etc.). First line is the candidate's name. Second line is contact info (location, phone, email separated by " · "). Use "•" for bullet points. Use blank lines between sections and between roles.
+Return ONLY JSON (no markdown). For "optimizedResume": format as plain text with clear section headers in ALL CAPS (PROFESSIONAL SUMMARY, WORK EXPERIENCE, EDUCATION, SKILLS, etc.). First line is the candidate's name. Second line is contact info (location · phone · email separated by " · "). Use "•" for bullet points. Use blank lines between sections and between roles.
 
 {
   "optimizedResume": "FULL NAME\\nLocation · phone · email\\n\\nPROFESSIONAL SUMMARY\\n...content...\\n\\nWORK EXPERIENCE\\n\\nJob Title\\nCompany — Location\\nDates\\n\\n• bullet one\\n• bullet two\\n\\n...etc",
@@ -530,7 +576,7 @@ function CoverLetter({ isPro, credits, freeUsed, onUpgrade, onNeedLogin, onUse, 
 
     const titleHint = jobDesc.trim().split("\n")[0]?.slice(0, 80) || "Cover letter";
 
-    const prompt = `Write a ${tone} cover letter.
+    const prompt = `Write a ${tone} cover letter. End it with "Sincerely," followed by the candidate's name, phone, and email on separate lines (extract from resume).
 
 JOB:
 ${jobDesc}
@@ -538,14 +584,14 @@ ${jobDesc}
 CANDIDATE RESUME:
 ${resume}
 
-Return ONLY JSON. Extract the candidate's name and contact (location · phone · email) from the resume header.
+Return ONLY JSON. CRITICAL: candidateName and candidateContact MUST be filled in by extracting from the resume header (first lines). candidateContact format: "Location · phone · email".
 
 {
-  "coverLetter": "full cover letter with line breaks, start with 'Dear Hiring Manager,'",
+  "coverLetter": "Dear Hiring Manager,\\n\\n[body paragraphs]\\n\\nSincerely,\\n[Name]\\n[phone]\\n[email]",
   "hookLine": "strongest opening sentence",
   "personalizationPoints": ["3 personalization details"],
-  "candidateName": "Full Name from resume",
-  "candidateContact": "Location · phone · email"
+  "candidateName": "EXTRACTED Full Name from resume - REQUIRED",
+  "candidateContact": "EXTRACTED Location · phone · email - REQUIRED"
 }`;
 
     try {
