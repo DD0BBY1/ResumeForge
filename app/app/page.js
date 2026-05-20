@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase-browser";
 import {
   Sparkles, FileText, Target, Copy, Check, Loader2, ArrowRight, Zap,
   Mail, Linkedin, Crown, LogOut, Gift, Coins, Download, History, Trash2, Clock, Palette,
+  Upload, X, FileUp,
 } from "lucide-react";
 
 async function callClaudeAPI(prompt, tool, maxTokens = 4000, title = "") {
@@ -21,7 +22,267 @@ async function callClaudeAPI(prompt, tool, maxTokens = 4000, title = "") {
 }
 
 /* ============================================================
-   RESUME PDF — modern, ATS-safe, single-page optimized
+   FILE PARSING — PDF, DOCX, TXT
+   ============================================================ */
+
+// Lazy load libraries when needed (saves bundle size on initial load)
+let pdfjsLib = null;
+let mammothLib = null;
+
+async function loadPdfJs() {
+  if (pdfjsLib) return pdfjsLib;
+  // Use the official pdfjs-dist CDN
+  if (typeof window === "undefined") return null;
+  if (!window.pdfjsLib) {
+    await new Promise((resolve, reject) => {
+      const script = document.createElement("script");
+      script.src = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js";
+      script.onload = resolve;
+      script.onerror = reject;
+      document.head.appendChild(script);
+    });
+    window.pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+  }
+  pdfjsLib = window.pdfjsLib;
+  return pdfjsLib;
+}
+
+async function loadMammoth() {
+  if (mammothLib) return mammothLib;
+  if (typeof window === "undefined") return null;
+  if (!window.mammoth) {
+    await new Promise((resolve, reject) => {
+      const script = document.createElement("script");
+      script.src = "https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js";
+      script.onload = resolve;
+      script.onerror = reject;
+      document.head.appendChild(script);
+    });
+  }
+  mammothLib = window.mammoth;
+  return mammothLib;
+}
+
+async function extractTextFromFile(file) {
+  const name = (file.name || "").toLowerCase();
+  const type = (file.type || "").toLowerCase();
+
+  // TXT
+  if (name.endsWith(".txt") || type === "text/plain") {
+    return await file.text();
+  }
+
+  // PDF
+  if (name.endsWith(".pdf") || type === "application/pdf") {
+    const pdfjs = await loadPdfJs();
+    const arrayBuffer = await file.arrayBuffer();
+    const pdf = await pdfjs.getDocument({ data: arrayBuffer }).promise;
+    let text = "";
+    for (let i = 1; i <= pdf.numPages; i++) {
+      const page = await pdf.getPage(i);
+      const content = await page.getTextContent();
+      // Group text items by their y-position to reconstruct lines
+      const items = content.items;
+      let lastY = null;
+      let line = "";
+      for (const item of items) {
+        const y = Math.round(item.transform[5]);
+        if (lastY !== null && Math.abs(y - lastY) > 2) {
+          text += line.trim() + "\n";
+          line = "";
+        }
+        line += item.str + (item.hasEOL ? "\n" : " ");
+        lastY = y;
+      }
+      if (line.trim()) text += line.trim() + "\n";
+      text += "\n";
+    }
+    return cleanExtractedText(text);
+  }
+
+  // DOCX
+  if (name.endsWith(".docx") || type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document") {
+    const mammoth = await loadMammoth();
+    const arrayBuffer = await file.arrayBuffer();
+    const result = await mammoth.extractRawText({ arrayBuffer });
+    return cleanExtractedText(result.value);
+  }
+
+  // DOC (legacy) — warn user
+  if (name.endsWith(".doc")) {
+    throw new Error("Old .doc format isn't supported. Please save as .docx or .pdf and try again.");
+  }
+
+  throw new Error("Unsupported file type. Please upload a PDF, DOCX, or TXT file.");
+}
+
+function cleanExtractedText(text) {
+  // Normalize whitespace, remove excess blank lines
+  return text
+    .replace(/\r\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .replace(/[ \t]+/g, " ")
+    .split("\n")
+    .map(l => l.trim())
+    .join("\n")
+    .trim();
+}
+
+/* ============================================================
+   UPLOAD ZONE COMPONENT
+   ============================================================ */
+function ResumeUploadZone({ onTextExtracted, currentText, onClearText }) {
+  const [dragOver, setDragOver] = useState(false);
+  const [parsing, setParsing] = useState(false);
+  const [error, setError] = useState("");
+  const [filename, setFilename] = useState("");
+  const [showPaste, setShowPaste] = useState(false);
+  const inputRef = useRef(null);
+
+  const handleFile = async (file) => {
+    if (!file) return;
+    setError("");
+    setParsing(true);
+    setFilename(file.name);
+    try {
+      const text = await extractTextFromFile(file);
+      if (!text || text.trim().length < 50) {
+        throw new Error("Couldn't read enough text from this file. It may be scanned/image-based. Try a text-based PDF or paste manually.");
+      }
+      onTextExtracted(text);
+    } catch (e) {
+      setError(e.message || "Failed to read file.");
+      setFilename("");
+    } finally {
+      setParsing(false);
+    }
+  };
+
+  const onDrop = (e) => {
+    e.preventDefault();
+    setDragOver(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file) handleFile(file);
+  };
+
+  const onPick = (e) => {
+    const file = e.target.files?.[0];
+    if (file) handleFile(file);
+    e.target.value = ""; // reset so the same file can be re-selected
+  };
+
+  const clearAll = () => {
+    setFilename("");
+    setError("");
+    onClearText();
+  };
+
+  // If text already exists (from upload or paste), show "loaded" state
+  if (currentText && currentText.trim().length > 0) {
+    return (
+      <div className="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-3">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2 min-w-0">
+            <FileText className="w-4 h-4 text-green-400 flex-shrink-0" />
+            <div className="min-w-0">
+              <div className="font-semibold text-sm">
+                {filename ? <>Uploaded: <span className="text-green-300 truncate">{filename}</span></> : "Resume loaded"}
+              </div>
+              <div className="text-xs text-white/40 mt-0.5">{currentText.length.toLocaleString()} characters · ready to optimize</div>
+            </div>
+          </div>
+          <button
+            onClick={clearAll}
+            className="text-xs px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-white/70 hover:text-white transition flex items-center gap-1 flex-shrink-0"
+          >
+            <X className="w-3 h-3" /> Clear
+          </button>
+        </div>
+        <details className="text-xs">
+          <summary className="cursor-pointer text-white/40 hover:text-white/60">Preview extracted text</summary>
+          <pre className="mt-2 p-3 bg-black/30 rounded-lg max-h-32 overflow-y-auto text-white/60 whitespace-pre-wrap font-mono text-[10px] leading-relaxed">{currentText.slice(0, 800)}{currentText.length > 800 ? "..." : ""}</pre>
+        </details>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center gap-2 mb-1">
+        <FileText className="w-4 h-4 text-amber-400" />
+        <label className="font-semibold text-sm">Your current resume</label>
+      </div>
+
+      {!showPaste ? (
+        <div
+          onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+          onDragLeave={() => setDragOver(false)}
+          onDrop={onDrop}
+          onClick={() => inputRef.current?.click()}
+          className={`relative cursor-pointer rounded-2xl border-2 border-dashed transition p-8 sm:p-10 text-center ${
+            dragOver
+              ? "border-amber-400 bg-amber-400/10"
+              : "border-white/20 bg-white/5 hover:border-white/30 hover:bg-white/[0.07]"
+          }`}
+        >
+          <input
+            ref={inputRef}
+            type="file"
+            accept=".pdf,.docx,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain"
+            onChange={onPick}
+            className="hidden"
+          />
+          {parsing ? (
+            <div className="flex flex-col items-center gap-3">
+              <Loader2 className="w-7 h-7 text-amber-400 animate-spin" />
+              <div className="text-sm text-white/80">Reading {filename}...</div>
+            </div>
+          ) : (
+            <div className="flex flex-col items-center gap-3">
+              <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-amber-400/20 to-pink-500/20 border border-amber-400/30 flex items-center justify-center">
+                <FileUp className="w-6 h-6 text-amber-300" />
+              </div>
+              <div>
+                <div className="font-semibold text-sm text-white">Drop your resume here</div>
+                <div className="text-xs text-white/50 mt-1">or click to browse</div>
+              </div>
+              <div className="text-[11px] text-white/40">PDF · DOCX · TXT · up to 10MB</div>
+            </div>
+          )}
+        </div>
+      ) : (
+        <textarea
+          autoFocus
+          onBlur={(e) => {
+            if (e.target.value.trim().length > 50) {
+              onTextExtracted(e.target.value);
+              setShowPaste(false);
+            }
+          }}
+          placeholder="Paste your full resume here, then click outside to confirm..."
+          className="w-full h-44 bg-black/30 border border-white/10 rounded-xl p-4 text-sm placeholder:text-white/30 focus:outline-none focus:border-amber-400/50 resize-none"
+        />
+      )}
+
+      {error && (
+        <div className="bg-red-500/10 border border-red-500/30 text-red-300 text-xs rounded-xl p-3">{error}</div>
+      )}
+
+      <div className="flex items-center justify-between text-xs">
+        <button
+          onClick={() => setShowPaste(!showPaste)}
+          className="text-white/40 hover:text-white/70 underline"
+        >
+          {showPaste ? "← Upload a file instead" : "Or paste text instead →"}
+        </button>
+        <span className="text-white/30">Files processed in your browser. Never uploaded.</span>
+      </div>
+    </div>
+  );
+}
+
+/* ============================================================
+   RESUME PDF — modern, ATS-safe
    ============================================================ */
 function parseResumeContent(rawResume) {
   const lines = rawResume.split("\n").map(l => l.trim());
@@ -61,9 +322,7 @@ function buildResumeHTML({ name, contact, sections }, accent) {
   const headerLineColor = accent ? "#c2410c" : "#1f2937";
 
   const sectionsHTML = sections.map(s => {
-    // Check if this is the Skills section to use 2-column grid
     const isSkills = /SKILLS|COMPETENCIES|LANGUAGES/i.test(s.title);
-
     const itemsHTML = s.content
       .map(line => {
         if (!line) return '<div style="height:3pt;"></div>';
@@ -89,87 +348,30 @@ function buildResumeHTML({ name, contact, sections }, accent) {
   }).join("");
 
   return `<!DOCTYPE html>
-<html>
-<head>
-<meta charset="UTF-8">
-<title>${escapeHTML(name) || "Resume"}</title>
+<html><head><meta charset="UTF-8"><title>${escapeHTML(name) || "Resume"}</title>
 <style>
   @page { margin: 0.5in 0.6in; size: letter; }
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; }
   body {
     font-family: 'Helvetica Neue', 'Helvetica', 'Arial', sans-serif;
-    color: #1a1a1a;
-    font-size: 10pt;
-    line-height: 1.35;
-    -webkit-print-color-adjust: exact;
-    print-color-adjust: exact;
+    color: #1a1a1a; font-size: 10pt; line-height: 1.35;
+    -webkit-print-color-adjust: exact; print-color-adjust: exact;
   }
   .resume-header { margin-bottom: 10pt; }
-  .resume-name {
-    font-size: 22pt;
-    font-weight: 700;
-    color: ${accentColor};
-    letter-spacing: -0.5pt;
-    margin: 0 0 3pt 0;
-    line-height: 1.1;
-  }
-  .resume-contact {
-    font-size: 9pt;
-    color: #4b5563;
-    margin: 0 0 8pt 0;
-    font-weight: 400;
-  }
-  .header-divider {
-    border: 0;
-    border-top: 1.5pt solid ${headerLineColor};
-    margin: 0 0 10pt 0;
-  }
-  .resume-section {
-    margin-bottom: 10pt;
-    page-break-inside: avoid;
-  }
-  .section-heading {
-    font-size: 10pt;
-    font-weight: 700;
-    color: ${accentColor};
-    text-transform: uppercase;
-    letter-spacing: 1.2pt;
-    margin: 0 0 2pt 0;
-  }
-  .section-divider {
-    border-top: 0.5pt solid #d1d5db;
-    margin-bottom: 5pt;
-  }
-  .role-line {
-    font-weight: 600;
-    color: #111827;
-    margin-top: 4pt;
-    margin-bottom: 1pt;
-    font-size: 10pt;
-  }
+  .resume-name { font-size: 22pt; font-weight: 700; color: ${accentColor}; letter-spacing: -0.5pt; margin: 0 0 3pt 0; line-height: 1.1; }
+  .resume-contact { font-size: 9pt; color: #4b5563; margin: 0 0 8pt 0; font-weight: 400; }
+  .header-divider { border: 0; border-top: 1.5pt solid ${headerLineColor}; margin: 0 0 10pt 0; }
+  .resume-section { margin-bottom: 10pt; page-break-inside: avoid; }
+  .section-heading { font-size: 10pt; font-weight: 700; color: ${accentColor}; text-transform: uppercase; letter-spacing: 1.2pt; margin: 0 0 2pt 0; }
+  .section-divider { border-top: 0.5pt solid #d1d5db; margin-bottom: 5pt; }
+  .role-line { font-weight: 600; color: #111827; margin-top: 4pt; margin-bottom: 1pt; font-size: 10pt; }
   .body-line { margin-bottom: 2pt; }
-  .bullet {
-    display: flex;
-    margin-bottom: 2pt;
-    padding-left: 2pt;
-  }
-  .bullet .dot {
-    flex-shrink: 0;
-    width: 11pt;
-    color: ${accentColor};
-    font-weight: 700;
-  }
+  .bullet { display: flex; margin-bottom: 2pt; padding-left: 2pt; }
+  .bullet .dot { flex-shrink: 0; width: 11pt; color: ${accentColor}; font-weight: 700; }
   .bullet .bullet-text { flex: 1; text-align: left; }
-  .skills-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 0 16pt;
-  }
-  @media print { body { font-size: 10pt; } }
-</style>
-</head>
-<body>
+  .skills-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 16pt; }
+</style></head><body>
   <div class="resume-header">
     <h1 class="resume-name">${escapeHTML(name)}</h1>
     <div class="resume-contact">${escapeHTML(contact)}</div>
@@ -177,34 +379,25 @@ function buildResumeHTML({ name, contact, sections }, accent) {
   </div>
   ${sectionsHTML}
   <script>window.onload = () => { setTimeout(() => window.print(), 200); };</script>
-</body>
-</html>`;
+</body></html>`;
 }
 
 /* ============================================================
-   COVER LETTER PDF — matching letterhead with reliable fallback
+   COVER LETTER PDF
    ============================================================ */
 function extractHeaderFromCoverLetter(content) {
-  // Try to extract name/contact from end of letter (Sincerely, Name, phone, email)
   const lines = content.split("\n").map(l => l.trim());
-  // Find "Sincerely" or similar closing
   let closingIdx = -1;
   for (let i = lines.length - 1; i >= 0; i--) {
     if (/^(sincerely|regards|best|thank you|yours truly|respectfully)/i.test(lines[i])) {
-      closingIdx = i;
-      break;
+      closingIdx = i; break;
     }
   }
-
   if (closingIdx === -1) return null;
-
-  // Grab non-empty lines after closing
   const sigLines = lines.slice(closingIdx + 1).filter(l => l.length > 0);
   if (sigLines.length < 1) return null;
-
   const name = sigLines[0];
-  const contactParts = sigLines.slice(1).filter(l => l.length > 0);
-  const contact = contactParts.join(" · ");
+  const contact = sigLines.slice(1).filter(l => l.length > 0).join(" · ");
   return { name, contact };
 }
 
@@ -212,32 +405,22 @@ function buildCoverLetterHTML(content, accent, headerInfo) {
   const accentColor = accent ? "#c2410c" : "#000000";
   const headerLineColor = accent ? "#c2410c" : "#1f2937";
 
-  // Use provided headerInfo, OR fall back to extracting from the letter itself
   let header = headerInfo;
-  if (!header || !header.name) {
-    header = extractHeaderFromCoverLetter(content);
-  }
+  if (!header || !header.name) header = extractHeaderFromCoverLetter(content);
 
   const name = header?.name || "";
   const contact = header?.contact || "";
 
-  // Strip the signature from the body if we extracted it (avoid duplicating name/contact)
   let bodyContent = content;
   if (header && name) {
-    // Remove signature block from body
     const lines = bodyContent.split("\n");
     let lastClosingIdx = -1;
     for (let i = lines.length - 1; i >= 0; i--) {
       if (/^(sincerely|regards|best|thank you|yours truly|respectfully)/i.test(lines[i].trim())) {
-        lastClosingIdx = i;
-        break;
+        lastClosingIdx = i; break;
       }
     }
     if (lastClosingIdx > -1) {
-      // Keep "Sincerely," but strip the contact lines below
-      bodyContent = lines.slice(0, lastClosingIdx + 2).join("\n");
-      // +2 keeps "Sincerely," and the name. Remove just phone/email after.
-      // Actually, let's keep just up to the name, then the signature looks clean:
       const truncated = lines.slice(0, lastClosingIdx + 1).concat([name]).join("\n");
       bodyContent = truncated;
     }
@@ -254,61 +437,26 @@ function buildCoverLetterHTML(content, accent, headerInfo) {
     </div>
   ` : "";
 
-  return `<!DOCTYPE html>
-<html>
-<head>
-<meta charset="UTF-8">
-<title>Cover Letter</title>
+  return `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Cover Letter</title>
 <style>
   @page { margin: 0.6in 0.7in; size: letter; }
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; }
-  body {
-    font-family: 'Helvetica Neue', 'Helvetica', 'Arial', sans-serif;
-    color: #1a1a1a;
-    font-size: 11pt;
-    line-height: 1.55;
-    -webkit-print-color-adjust: exact;
-    print-color-adjust: exact;
-  }
+  body { font-family: 'Helvetica Neue', 'Helvetica', 'Arial', sans-serif; color: #1a1a1a; font-size: 11pt; line-height: 1.55; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   .cl-header { margin-bottom: 22pt; }
-  .cl-name {
-    font-size: 22pt;
-    font-weight: 700;
-    color: ${accentColor};
-    letter-spacing: -0.5pt;
-    margin: 0 0 4pt 0;
-    line-height: 1.1;
-  }
-  .cl-contact {
-    font-size: 9.5pt;
-    color: #4b5563;
-    margin: 0 0 10pt 0;
-  }
-  .header-divider {
-    border: 0;
-    border-top: 1.5pt solid ${headerLineColor};
-    margin: 0;
-  }
+  .cl-name { font-size: 22pt; font-weight: 700; color: ${accentColor}; letter-spacing: -0.5pt; margin: 0 0 4pt 0; line-height: 1.1; }
+  .cl-contact { font-size: 9.5pt; color: #4b5563; margin: 0 0 10pt 0; }
+  .header-divider { border: 0; border-top: 1.5pt solid ${headerLineColor}; margin: 0; }
   p { margin: 0 0 11pt 0; }
-</style>
-</head>
-<body>
-  ${headerBlock}
-  ${bodyHTML}
+</style></head><body>
+  ${headerBlock}${bodyHTML}
   <script>window.onload = () => { setTimeout(() => window.print(), 200); };</script>
-</body>
-</html>`;
+</body></html>`;
 }
 
 function escapeHTML(str) {
   if (!str) return "";
-  return String(str)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
+  return String(str).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }
 
 function downloadHTMLDocument(html) {
@@ -319,40 +467,34 @@ function downloadHTMLDocument(html) {
 }
 
 /* ============================================================
-   UI Components
+   Shared UI
    ============================================================ */
 function CopyBtn({ text }) {
   const [copied, setCopied] = useState(false);
   return (
-    <button
-      onClick={() => {
-        navigator.clipboard.writeText(text);
-        setCopied(true);
-        setTimeout(() => setCopied(false), 2000);
-      }}
-      className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 transition"
-    >
+    <button onClick={() => { navigator.clipboard.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 2000); }}
+      className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 transition">
       {copied ? <><Check className="w-3.5 h-3.5 text-green-400" /> Copied</> : <><Copy className="w-3.5 h-3.5" /> Copy</>}
     </button>
   );
 }
 
-function ResumeDownloadBtn({ content }) {
+function PdfDownloadBtn({ content, kind, headerInfo }) {
   const [accent, setAccent] = useState(true);
   const [showTip, setShowTip] = useState(false);
 
   const handleDownload = () => {
-    const parsed = parseResumeContent(content);
-    const html = buildResumeHTML(parsed, accent);
-
+    let html;
+    if (kind === "resume") {
+      html = buildResumeHTML(parseResumeContent(content), accent);
+    } else {
+      html = buildCoverLetterHTML(content, accent, headerInfo);
+    }
     const seen = sessionStorage.getItem("pdf_tip_seen");
     if (!seen) {
       setShowTip(true);
       sessionStorage.setItem("pdf_tip_seen", "1");
-      setTimeout(() => {
-        downloadHTMLDocument(html);
-        setTimeout(() => setShowTip(false), 5000);
-      }, 1200);
+      setTimeout(() => { downloadHTMLDocument(html); setTimeout(() => setShowTip(false), 5000); }, 1200);
     } else {
       downloadHTMLDocument(html);
     }
@@ -360,74 +502,16 @@ function ResumeDownloadBtn({ content }) {
 
   return (
     <div className="flex items-center gap-2">
-      <button
-        onClick={() => setAccent(!accent)}
-        className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 transition border border-white/10"
-        title="Toggle color style"
-      >
-        <Palette className="w-3.5 h-3.5" />
-        {accent ? "Accent" : "B&W"}
+      <button onClick={() => setAccent(!accent)} className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 transition border border-white/10" title="Toggle color style">
+        <Palette className="w-3.5 h-3.5" />{accent ? "Accent" : "B&W"}
       </button>
-      <button
-        onClick={handleDownload}
-        className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-amber-400/20 border border-amber-400/30 text-amber-200 hover:bg-amber-400/30 transition"
-      >
+      <button onClick={handleDownload} className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-amber-400/20 border border-amber-400/30 text-amber-200 hover:bg-amber-400/30 transition">
         <Download className="w-3.5 h-3.5" /> PDF
       </button>
       {showTip && (
         <div className="fixed bottom-6 right-6 z-50 max-w-xs bg-slate-900 border border-amber-400/50 rounded-2xl p-4 shadow-2xl">
           <div className="text-xs font-bold text-amber-300 mb-1 uppercase tracking-wider">Quick tip</div>
-          <p className="text-sm text-white/90 leading-snug">
-            In the print dialog, choose <b>Save as PDF</b>, then <b>More settings</b> → uncheck <b>"Headers and footers"</b> for a clean export.
-          </p>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function CoverLetterDownloadBtn({ content, headerInfo }) {
-  const [accent, setAccent] = useState(true);
-  const [showTip, setShowTip] = useState(false);
-
-  const handleDownload = () => {
-    const html = buildCoverLetterHTML(content, accent, headerInfo);
-
-    const seen = sessionStorage.getItem("pdf_tip_seen");
-    if (!seen) {
-      setShowTip(true);
-      sessionStorage.setItem("pdf_tip_seen", "1");
-      setTimeout(() => {
-        downloadHTMLDocument(html);
-        setTimeout(() => setShowTip(false), 5000);
-      }, 1200);
-    } else {
-      downloadHTMLDocument(html);
-    }
-  };
-
-  return (
-    <div className="flex items-center gap-2">
-      <button
-        onClick={() => setAccent(!accent)}
-        className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 transition border border-white/10"
-        title="Toggle color style"
-      >
-        <Palette className="w-3.5 h-3.5" />
-        {accent ? "Accent" : "B&W"}
-      </button>
-      <button
-        onClick={handleDownload}
-        className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-amber-400/20 border border-amber-400/30 text-amber-200 hover:bg-amber-400/30 transition"
-      >
-        <Download className="w-3.5 h-3.5" /> PDF
-      </button>
-      {showTip && (
-        <div className="fixed bottom-6 right-6 z-50 max-w-xs bg-slate-900 border border-amber-400/50 rounded-2xl p-4 shadow-2xl">
-          <div className="text-xs font-bold text-amber-300 mb-1 uppercase tracking-wider">Quick tip</div>
-          <p className="text-sm text-white/90 leading-snug">
-            In the print dialog, choose <b>Save as PDF</b>, then <b>More settings</b> → uncheck <b>"Headers and footers"</b> for a clean export.
-          </p>
+          <p className="text-sm text-white/90 leading-snug">In the print dialog, choose <b>Save as PDF</b>, then <b>More settings</b> → uncheck <b>"Headers and footers"</b> for a clean export.</p>
         </div>
       )}
     </div>
@@ -438,9 +522,7 @@ function UsageIndicator({ isPro, credits, freeUsed, onUpgrade }) {
   if (isPro) return null;
   if (credits > 0) {
     return (
-      <div className={`flex items-center gap-2 px-3 py-2 rounded-xl border text-xs ${
-        credits > 2 ? "bg-blue-500/10 border-blue-500/30 text-blue-300" : "bg-amber-500/10 border-amber-500/30 text-amber-300"
-      }`}>
+      <div className={`flex items-center gap-2 px-3 py-2 rounded-xl border text-xs ${credits > 2 ? "bg-blue-500/10 border-blue-500/30 text-blue-300" : "bg-amber-500/10 border-amber-500/30 text-amber-300"}`}>
         <Coins className="w-3.5 h-3.5" />
         <span><b>{credits} credit{credits === 1 ? "" : "s"}</b> remaining for this tool</span>
       </div>
@@ -448,19 +530,15 @@ function UsageIndicator({ isPro, credits, freeUsed, onUpgrade }) {
   }
   const freeRemaining = Math.max(0, 1 - freeUsed);
   return (
-    <div className={`flex items-center gap-2 px-3 py-2 rounded-xl border text-xs ${
-      freeRemaining > 0 ? "bg-green-500/10 border-green-500/30 text-green-300" : "bg-amber-500/10 border-amber-500/30 text-amber-300"
-    }`}>
+    <div className={`flex items-center gap-2 px-3 py-2 rounded-xl border text-xs ${freeRemaining > 0 ? "bg-green-500/10 border-green-500/30 text-green-300" : "bg-amber-500/10 border-amber-500/30 text-amber-300"}`}>
       <Gift className="w-3.5 h-3.5" />
-      {freeRemaining > 0 ? (<span><b>{freeRemaining} free use</b> remaining for this tool</span>) : (
-        <><span>Free trial used — </span><button onClick={onUpgrade} className="font-bold underline">get more</button></>
-      )}
+      {freeRemaining > 0 ? <span><b>{freeRemaining} free use</b> remaining for this tool</span> : <><span>Free trial used — </span><button onClick={onUpgrade} className="font-bold underline">get more</button></>}
     </div>
   );
 }
 
 /* ============================================================
-   Tools
+   RESUME OPTIMIZER
    ============================================================ */
 function ResumeOptimizer({ isPro, credits, freeUsed, onUpgrade, onNeedLogin, onUse, loaded }) {
   const [resume, setResume] = useState("");
@@ -478,19 +556,18 @@ function ResumeOptimizer({ isPro, credits, freeUsed, onUpgrade, onNeedLogin, onU
   }, [loaded]);
 
   const optimize = async () => {
-    if (!resume.trim()) return setError("Please paste your resume first.");
+    if (!resume.trim()) return setError("Please upload or paste your resume first.");
     setError(""); setLoading(true); setResult(null);
-
     const titleHint = jobDesc.trim().split("\n")[0]?.slice(0, 80) || "Resume optimization";
 
-    const prompt = `You are an expert resume writer. Optimize this resume${jobDesc.trim() ? " for the target job" : ""}. Aim for content that fits comfortably on ONE PAGE. Be concise. Limit Skills section to 8-12 most relevant items, not 15+.
+    const prompt = `You are an expert resume writer. Optimize this resume${jobDesc.trim() ? " for the target job" : ""}. Aim for content that fits comfortably on ONE PAGE. Be concise. Limit Skills section to 8-12 most relevant items.
 
 RESUME:
 ${resume}
 
 ${jobDesc.trim() ? `TARGET JOB:\n${jobDesc}\n` : ""}
 
-Return ONLY JSON (no markdown). For "optimizedResume": format as plain text with clear section headers in ALL CAPS (PROFESSIONAL SUMMARY, WORK EXPERIENCE, EDUCATION, SKILLS, etc.). First line is the candidate's name. Second line is contact info (location · phone · email separated by " · "). Use "•" for bullet points. Use blank lines between sections and between roles.
+Return ONLY JSON (no markdown). For "optimizedResume": format as plain text with clear section headers in ALL CAPS (PROFESSIONAL SUMMARY, WORK EXPERIENCE, EDUCATION, SKILLS, etc.). First line is the candidate's name. Second line is contact info (location · phone · email separated by " · "). Use "•" for bullet points. Use blank lines between sections.
 
 {
   "optimizedResume": "FULL NAME\\nLocation · phone · email\\n\\nPROFESSIONAL SUMMARY\\n...content...\\n\\nWORK EXPERIENCE\\n\\nJob Title\\nCompany — Location\\nDates\\n\\n• bullet one\\n• bullet two\\n\\n...etc",
@@ -516,18 +593,24 @@ Return ONLY JSON (no markdown). For "optimizedResume": format as plain text with
   return (
     <div className="space-y-5">
       <UsageIndicator isPro={isPro} credits={credits} freeUsed={freeUsed} onUpgrade={onUpgrade} />
-      <div className="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-3">
-        <div className="flex items-center gap-2"><FileText className="w-4 h-4 text-amber-400" /><label className="font-semibold text-sm">Your current resume</label></div>
-        <textarea value={resume} onChange={(e) => setResume(e.target.value)} placeholder="Paste your full resume here..." className="w-full h-44 bg-black/30 border border-white/10 rounded-xl p-4 text-sm placeholder:text-white/30 focus:outline-none focus:border-amber-400/50 resize-none" />
-      </div>
+
+      <ResumeUploadZone
+        currentText={resume}
+        onTextExtracted={setResume}
+        onClearText={() => setResume("")}
+      />
+
       <div className="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-3">
         <div className="flex items-center gap-2"><Target className="w-4 h-4 text-pink-400" /><label className="font-semibold text-sm">Target job description</label><span className="text-xs text-white/40">optional</span></div>
         <textarea value={jobDesc} onChange={(e) => setJobDesc(e.target.value)} placeholder="Paste the job posting..." className="w-full h-28 bg-black/30 border border-white/10 rounded-xl p-4 text-sm placeholder:text-white/30 focus:outline-none focus:border-pink-400/50 resize-none" />
       </div>
+
       {error && <div className="bg-red-500/10 border border-red-500/30 text-red-300 text-sm rounded-xl p-3">{error}</div>}
+
       <button onClick={optimize} disabled={loading} className="w-full py-4 rounded-2xl bg-gradient-to-r from-amber-400 to-pink-500 text-black font-bold flex items-center justify-center gap-2 disabled:opacity-50">
         {loading ? <><Loader2 className="w-5 h-5 animate-spin" /> Optimizing...</> : <>Optimize my resume <ArrowRight className="w-5 h-5" /></>}
       </button>
+
       {result && (
         <div ref={resultRef} className="space-y-5 pt-2">
           <div className="bg-gradient-to-br from-amber-400/10 to-pink-500/10 border border-amber-400/30 rounded-2xl p-6">
@@ -538,7 +621,7 @@ Return ONLY JSON (no markdown). For "optimizedResume": format as plain text with
             <div className="flex items-center justify-between px-5 py-3 border-b border-white/10 bg-black/20 flex-wrap gap-2">
               <span className="font-semibold text-sm">Optimized Resume</span>
               <div className="flex gap-2 items-center">
-                <ResumeDownloadBtn content={result.optimizedResume} />
+                <PdfDownloadBtn content={result.optimizedResume} kind="resume" />
                 <CopyBtn text={result.optimizedResume} />
               </div>
             </div>
@@ -554,6 +637,9 @@ Return ONLY JSON (no markdown). For "optimizedResume": format as plain text with
   );
 }
 
+/* ============================================================
+   COVER LETTER
+   ============================================================ */
 function CoverLetter({ isPro, credits, freeUsed, onUpgrade, onNeedLogin, onUse, loaded }) {
   const [resume, setResume] = useState("");
   const [jobDesc, setJobDesc] = useState("");
@@ -573,7 +659,6 @@ function CoverLetter({ isPro, credits, freeUsed, onUpgrade, onNeedLogin, onUse, 
   const generate = async () => {
     if (!resume.trim() || !jobDesc.trim()) return setError("Resume and job description required.");
     setError(""); setLoading(true); setResult(null);
-
     const titleHint = jobDesc.trim().split("\n")[0]?.slice(0, 80) || "Cover letter";
 
     const prompt = `Write a ${tone} cover letter. End it with "Sincerely," followed by the candidate's name, phone, and email on separate lines (extract from resume).
@@ -584,10 +669,10 @@ ${jobDesc}
 CANDIDATE RESUME:
 ${resume}
 
-Return ONLY JSON. CRITICAL: candidateName and candidateContact MUST be filled in by extracting from the resume header (first lines). candidateContact format: "Location · phone · email".
+Return ONLY JSON. CRITICAL: candidateName and candidateContact MUST be filled in by extracting from the resume header. candidateContact format: "Location · phone · email".
 
 {
-  "coverLetter": "Dear Hiring Manager,\\n\\n[body paragraphs]\\n\\nSincerely,\\n[Name]\\n[phone]\\n[email]",
+  "coverLetter": "Dear Hiring Manager,\\n\\n[body]\\n\\nSincerely,\\n[Name]\\n[phone]\\n[email]",
   "hookLine": "strongest opening sentence",
   "personalizationPoints": ["3 personalization details"],
   "candidateName": "EXTRACTED Full Name from resume - REQUIRED",
@@ -610,14 +695,18 @@ Return ONLY JSON. CRITICAL: candidateName and candidateContact MUST be filled in
   return (
     <div className="space-y-5">
       <UsageIndicator isPro={isPro} credits={credits} freeUsed={freeUsed} onUpgrade={onUpgrade} />
-      <div className="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-3">
-        <div className="flex items-center gap-2"><FileText className="w-4 h-4 text-amber-400" /><label className="font-semibold text-sm">Your resume</label></div>
-        <textarea value={resume} onChange={(e) => setResume(e.target.value)} placeholder="Paste your resume..." className="w-full h-32 bg-black/30 border border-white/10 rounded-xl p-4 text-sm placeholder:text-white/30 focus:outline-none focus:border-amber-400/50 resize-none" />
-      </div>
+
+      <ResumeUploadZone
+        currentText={resume}
+        onTextExtracted={setResume}
+        onClearText={() => setResume("")}
+      />
+
       <div className="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-3">
         <div className="flex items-center gap-2"><Target className="w-4 h-4 text-pink-400" /><label className="font-semibold text-sm">Job description</label></div>
         <textarea value={jobDesc} onChange={(e) => setJobDesc(e.target.value)} placeholder="Paste the job posting..." className="w-full h-32 bg-black/30 border border-white/10 rounded-xl p-4 text-sm placeholder:text-white/30 focus:outline-none focus:border-pink-400/50 resize-none" />
       </div>
+
       <div className="bg-white/5 border border-white/10 rounded-2xl p-5">
         <label className="font-semibold text-sm mb-3 block">Tone</label>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
@@ -626,10 +715,13 @@ Return ONLY JSON. CRITICAL: candidateName and candidateContact MUST be filled in
           ))}
         </div>
       </div>
+
       {error && <div className="bg-red-500/10 border border-red-500/30 text-red-300 text-sm rounded-xl p-3">{error}</div>}
+
       <button onClick={generate} disabled={loading} className="w-full py-4 rounded-2xl bg-gradient-to-r from-amber-400 to-pink-500 text-black font-bold flex items-center justify-center gap-2 disabled:opacity-50">
         {loading ? <><Loader2 className="w-5 h-5 animate-spin" /> Writing...</> : <>Write my cover letter <ArrowRight className="w-5 h-5" /></>}
       </button>
+
       {result && (
         <div ref={resultRef} className="space-y-4 pt-2">
           <div className="bg-gradient-to-br from-amber-400/10 to-pink-500/10 border border-amber-400/30 rounded-2xl p-5"><div className="text-xs uppercase tracking-wider text-amber-300 mb-2 font-semibold">Your hook</div><p className="text-white/90 italic">"{result.hookLine}"</p></div>
@@ -637,7 +729,7 @@ Return ONLY JSON. CRITICAL: candidateName and candidateContact MUST be filled in
             <div className="flex items-center justify-between px-5 py-3 border-b border-white/10 bg-black/20 flex-wrap gap-2">
               <span className="font-semibold text-sm">Cover Letter</span>
               <div className="flex gap-2 items-center">
-                <CoverLetterDownloadBtn content={result.coverLetter} headerInfo={{ name: result.candidateName, contact: result.candidateContact }} />
+                <PdfDownloadBtn content={result.coverLetter} kind="cover" headerInfo={{ name: result.candidateName, contact: result.candidateContact }} />
                 <CopyBtn text={result.coverLetter} />
               </div>
             </div>
@@ -650,6 +742,9 @@ Return ONLY JSON. CRITICAL: candidateName and candidateContact MUST be filled in
   );
 }
 
+/* ============================================================
+   LINKEDIN
+   ============================================================ */
 function LinkedInRewriter({ isPro, credits, freeUsed, onUpgrade, onNeedLogin, onUse, loaded }) {
   const [bio, setBio] = useState("");
   const [goal, setGoal] = useState("");
@@ -668,7 +763,6 @@ function LinkedInRewriter({ isPro, credits, freeUsed, onUpgrade, onNeedLogin, on
   const rewrite = async () => {
     if (!bio.trim() || !goal.trim()) return setError("Both fields required.");
     setError(""); setLoading(true); setResult(null);
-
     const titleHint = goal.trim().slice(0, 80) || "LinkedIn rewrite";
 
     const prompt = `Rewrite this LinkedIn presence.
@@ -719,10 +813,7 @@ Return ONLY JSON:
           <div className="bg-white/5 border border-white/10 rounded-2xl p-5"><h3 className="font-semibold text-sm mb-3 flex items-center gap-2"><Sparkles className="w-4 h-4 text-amber-400" /> Headlines</h3><div className="space-y-2">{result.headlines.map((h, i) => <div key={i} className="bg-black/30 border border-white/10 rounded-xl p-3 flex items-start justify-between gap-3"><p className="text-sm text-white/90 flex-1">{h}</p><CopyBtn text={h} /></div>)}</div></div>
           <div className="bg-white/5 border border-white/10 rounded-2xl overflow-hidden">
             <div className="flex items-center justify-between px-5 py-3 border-b border-white/10 bg-black/20">
-              <div>
-                <span className="font-semibold text-sm">About section</span>
-                <span className="text-xs text-white/40 ml-2">Paste this directly into LinkedIn</span>
-              </div>
+              <div><span className="font-semibold text-sm">About section</span><span className="text-xs text-white/40 ml-2">Paste this directly into LinkedIn</span></div>
               <CopyBtn text={result.aboutSection} />
             </div>
             <pre className="p-5 text-sm whitespace-pre-wrap font-sans text-white/90 max-h-96 overflow-y-auto leading-relaxed">{result.aboutSection}</pre>
@@ -735,7 +826,7 @@ Return ONLY JSON:
 }
 
 /* ============================================================
-   History
+   HISTORY
    ============================================================ */
 function HistoryTab({ onOpenGeneration }) {
   const [items, setItems] = useState([]);
@@ -762,8 +853,7 @@ function HistoryTab({ onOpenGeneration }) {
 
   const formatDate = (ts) => {
     const d = new Date(ts);
-    const now = new Date();
-    const diff = (now - d) / 1000;
+    const diff = (new Date() - d) / 1000;
     if (diff < 60) return "just now";
     if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
     if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
@@ -779,24 +869,10 @@ function HistoryTab({ onOpenGeneration }) {
   return (
     <div className="space-y-4">
       <div className="flex gap-2 flex-wrap">
-        {[
-          { id: "all", label: "All" },
-          { id: "resume", label: "Resumes" },
-          { id: "cover", label: "Cover Letters" },
-          { id: "linkedin", label: "LinkedIn" },
-        ].map(f => (
-          <button
-            key={f.id}
-            onClick={() => setFilter(f.id)}
-            className={`text-xs px-3 py-1.5 rounded-lg transition ${
-              filter === f.id ? "bg-white/15 border border-white/30 text-white" : "bg-white/5 border border-white/10 text-white/60"
-            }`}
-          >
-            {f.label}
-          </button>
+        {[{ id: "all", label: "All" }, { id: "resume", label: "Resumes" }, { id: "cover", label: "Cover Letters" }, { id: "linkedin", label: "LinkedIn" }].map(f => (
+          <button key={f.id} onClick={() => setFilter(f.id)} className={`text-xs px-3 py-1.5 rounded-lg transition ${filter === f.id ? "bg-white/15 border border-white/30 text-white" : "bg-white/5 border border-white/10 text-white/60"}`}>{f.label}</button>
         ))}
       </div>
-
       {items.length === 0 ? (
         <div className="bg-white/5 border border-white/10 rounded-2xl py-16 text-center">
           <History className="w-10 h-10 mx-auto text-white/20 mb-3" />
@@ -809,9 +885,7 @@ function HistoryTab({ onOpenGeneration }) {
             const Icon = toolIcons[item.tool];
             return (
               <div key={item.id} className="bg-white/5 border border-white/10 rounded-2xl p-4 hover:border-white/20 transition flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-white/5 flex items-center justify-center flex-shrink-0">
-                  <Icon className={`w-4 h-4 ${toolColors[item.tool]}`} />
-                </div>
+                <div className="w-10 h-10 rounded-xl bg-white/5 flex items-center justify-center flex-shrink-0"><Icon className={`w-4 h-4 ${toolColors[item.tool]}`} /></div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-xs text-white/50 uppercase tracking-wider font-semibold">{toolLabels[item.tool]}</span>
@@ -819,19 +893,8 @@ function HistoryTab({ onOpenGeneration }) {
                   </div>
                   <p className="text-sm text-white/90 mt-0.5 truncate">{item.title || `${toolLabels[item.tool]} generation`}</p>
                 </div>
-                <button
-                  onClick={() => onOpenGeneration(item)}
-                  className="text-xs px-3 py-1.5 rounded-lg bg-gradient-to-r from-amber-400 to-pink-500 text-black font-bold hover:opacity-90 transition"
-                >
-                  Open
-                </button>
-                <button
-                  onClick={() => deleteItem(item.id)}
-                  className="p-2 rounded-lg text-white/40 hover:text-red-300 hover:bg-red-500/10 transition"
-                  aria-label="Delete"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                </button>
+                <button onClick={() => onOpenGeneration(item)} className="text-xs px-3 py-1.5 rounded-lg bg-gradient-to-r from-amber-400 to-pink-500 text-black font-bold hover:opacity-90 transition">Open</button>
+                <button onClick={() => deleteItem(item.id)} className="p-2 rounded-lg text-white/40 hover:text-red-300 hover:bg-red-500/10 transition" aria-label="Delete"><Trash2 className="w-3.5 h-3.5" /></button>
               </div>
             );
           })}
@@ -842,22 +905,16 @@ function HistoryTab({ onOpenGeneration }) {
 }
 
 /* ============================================================
-   Upgrade modal
+   UPGRADE MODAL
    ============================================================ */
 function UpgradeModal({ onClose }) {
   const [loading, setLoading] = useState(null);
-
   const checkout = async (plan) => {
     setLoading(plan);
-    const res = await fetch("/api/create-checkout", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ plan }),
-    });
+    const res = await fetch("/api/create-checkout", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ plan }) });
     const { url } = await res.json();
     if (url) window.location.href = url;
   };
-
   return (
     <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
       <div className="bg-gradient-to-br from-slate-900 to-indigo-950 border border-white/10 rounded-3xl max-w-2xl w-full p-6 relative my-8">
@@ -904,7 +961,7 @@ function UpgradeModal({ onClose }) {
 }
 
 /* ============================================================
-   Main page
+   MAIN PAGE
    ============================================================ */
 export default function AppPage() {
   const [tab, setTab] = useState("resume");
@@ -919,28 +976,18 @@ export default function AppPage() {
   const supabase = createClient();
 
   const loadAll = async (userId) => {
-    const { data: profile } = await supabase
-      .from("profiles")
-      .select("is_pro, credits_resume, credits_cover, credits_linkedin")
-      .eq("id", userId)
-      .single();
-
+    const { data: profile } = await supabase.from("profiles").select("is_pro, credits_resume, credits_cover, credits_linkedin").eq("id", userId).single();
     setIsPro(profile?.is_pro || false);
     setCredits({
       resume: profile?.credits_resume || 0,
       cover: profile?.credits_cover || 0,
       linkedin: profile?.credits_linkedin || 0,
     });
-
     if (!profile?.is_pro) {
       const tools = ["resume", "cover", "linkedin"];
       const counts = {};
       for (const tool of tools) {
-        const { count } = await supabase
-          .from("tool_usage")
-          .select("*", { count: "exact", head: true })
-          .eq("user_id", userId)
-          .eq("tool", tool);
+        const { count } = await supabase.from("tool_usage").select("*", { count: "exact", head: true }).eq("user_id", userId).eq("tool", tool);
         counts[tool] = count || 0;
       }
       setFreeUsed(counts);
@@ -953,11 +1000,8 @@ export default function AppPage() {
       setUser(user);
       if (user) await loadAll(user.id);
       setCheckingAuth(false);
-
       const upgraded = new URLSearchParams(window.location.search).get("upgraded");
-      if (upgraded && user) {
-        setTimeout(() => loadAll(user.id), 2500);
-      }
+      if (upgraded && user) setTimeout(() => loadAll(user.id), 2500);
     })();
   }, []);
 
@@ -966,21 +1010,10 @@ export default function AppPage() {
     setFreeUsed((u) => ({ ...u, [tool]: (u[tool] || 0) + 1 }));
     setCredits((c) => ({ ...c, [tool]: Math.max(0, (c[tool] || 0) - (c[tool] > 0 ? 1 : 0)) }));
   };
-  const signOut = async () => {
-    await supabase.auth.signOut();
-    setUser(null); setIsPro(false);
-    router.push("/");
-  };
+  const signOut = async () => { await supabase.auth.signOut(); setUser(null); setIsPro(false); router.push("/"); };
 
-  const openGeneration = (item) => {
-    setLoadedResult(item.result);
-    setTab(item.tool);
-  };
-
-  const switchTab = (newTab) => {
-    if (newTab !== tab) setLoadedResult(null);
-    setTab(newTab);
-  };
+  const openGeneration = (item) => { setLoadedResult(item.result); setTab(item.tool); };
+  const switchTab = (newTab) => { if (newTab !== tab) setLoadedResult(null); setTab(newTab); };
 
   const tabs = [
     { id: "resume", label: "Resume", icon: FileText },
@@ -991,9 +1024,7 @@ export default function AppPage() {
 
   const totalCredits = credits.resume + credits.cover + credits.linkedin;
 
-  if (checkingAuth) {
-    return <div className="min-h-screen bg-slate-950 flex items-center justify-center"><Loader2 className="w-6 h-6 text-white animate-spin" /></div>;
-  }
+  if (checkingAuth) return <div className="min-h-screen bg-slate-950 flex items-center justify-center"><Loader2 className="w-6 h-6 text-white animate-spin" /></div>;
 
   const StatusBadge = () => {
     if (isPro) return <span className="text-xs px-3 py-1.5 rounded-full bg-gradient-to-r from-amber-400/20 to-pink-500/20 border border-amber-400/50 text-amber-200 font-semibold flex items-center gap-1"><Crown className="w-3 h-3" /> Pro</span>;
@@ -1010,14 +1041,7 @@ export default function AppPage() {
             <div><h1 className="font-bold text-lg leading-none">ResumeForge</h1><p className="text-xs text-white/50">AI career toolkit</p></div>
           </a>
           <div className="flex items-center gap-2">
-            {user ? (
-              <>
-                <StatusBadge />
-                <button onClick={signOut} className="text-xs p-1.5 rounded-lg bg-white/5 hover:bg-white/10"><LogOut className="w-3.5 h-3.5" /></button>
-              </>
-            ) : (
-              <button onClick={() => router.push("/login")} className="text-xs px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20">Sign in</button>
-            )}
+            {user ? (<><StatusBadge /><button onClick={signOut} className="text-xs p-1.5 rounded-lg bg-white/5 hover:bg-white/10"><LogOut className="w-3.5 h-3.5" /></button></>) : (<button onClick={() => router.push("/login")} className="text-xs px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20">Sign in</button>)}
           </div>
         </div>
         <div className="max-w-4xl mx-auto px-4 pb-3 flex gap-1.5">
@@ -1033,8 +1057,8 @@ export default function AppPage() {
           <div className="text-center py-4 mb-2">
             <h2 className="text-2xl sm:text-3xl font-bold tracking-tight mb-2">{tab === "resume" && "Optimize your resume"}{tab === "cover" && "Write your cover letter"}{tab === "linkedin" && "Rewrite your LinkedIn"}</h2>
             <p className="text-sm text-white/60">
-              {tab === "resume" && "Tailored ATS-friendly rewrites in 30 seconds."}
-              {tab === "cover" && "Personalized cover letters that get read."}
+              {tab === "resume" && "Upload your resume. We'll rewrite it ATS-friendly in 30 seconds."}
+              {tab === "cover" && "Upload your resume, paste the job, get a personalized cover letter."}
               {tab === "linkedin" && "Headlines & About sections that attract recruiters."}
             </p>
           </div>
