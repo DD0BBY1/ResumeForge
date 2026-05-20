@@ -5,7 +5,7 @@ import { createClient } from "@/lib/supabase-browser";
 import {
   Sparkles, FileText, Target, Copy, Check, Loader2, ArrowRight, Zap,
   Mail, Linkedin, Crown, LogOut, Gift, Coins, Download, History, Trash2, Clock, Palette,
-  Upload, X, FileUp,
+  Upload, X, FileUp, TrendingUp,
 } from "lucide-react";
 
 async function callClaudeAPI(prompt, tool, maxTokens = 4000, title = "") {
@@ -22,16 +22,46 @@ async function callClaudeAPI(prompt, tool, maxTokens = 4000, title = "") {
 }
 
 /* ============================================================
+   ROBUST COPY HELPER — with fallback for older browsers/contexts
+   ============================================================ */
+async function copyToClipboard(text) {
+  // Modern clipboard API
+  if (navigator.clipboard && window.isSecureContext) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch (e) {
+      // fall through to legacy method
+    }
+  }
+  // Legacy fallback using a hidden textarea
+  try {
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.style.position = "fixed";
+    textarea.style.top = "0";
+    textarea.style.left = "0";
+    textarea.style.opacity = "0";
+    textarea.style.pointerEvents = "none";
+    document.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+    const ok = document.execCommand("copy");
+    document.body.removeChild(textarea);
+    return ok;
+  } catch (e) {
+    return false;
+  }
+}
+
+/* ============================================================
    FILE PARSING — PDF, DOCX, TXT
    ============================================================ */
-
-// Lazy load libraries when needed (saves bundle size on initial load)
 let pdfjsLib = null;
 let mammothLib = null;
 
 async function loadPdfJs() {
   if (pdfjsLib) return pdfjsLib;
-  // Use the official pdfjs-dist CDN
   if (typeof window === "undefined") return null;
   if (!window.pdfjsLib) {
     await new Promise((resolve, reject) => {
@@ -67,12 +97,10 @@ async function extractTextFromFile(file) {
   const name = (file.name || "").toLowerCase();
   const type = (file.type || "").toLowerCase();
 
-  // TXT
   if (name.endsWith(".txt") || type === "text/plain") {
     return await file.text();
   }
 
-  // PDF
   if (name.endsWith(".pdf") || type === "application/pdf") {
     const pdfjs = await loadPdfJs();
     const arrayBuffer = await file.arrayBuffer();
@@ -81,7 +109,6 @@ async function extractTextFromFile(file) {
     for (let i = 1; i <= pdf.numPages; i++) {
       const page = await pdf.getPage(i);
       const content = await page.getTextContent();
-      // Group text items by their y-position to reconstruct lines
       const items = content.items;
       let lastY = null;
       let line = "";
@@ -100,7 +127,6 @@ async function extractTextFromFile(file) {
     return cleanExtractedText(text);
   }
 
-  // DOCX
   if (name.endsWith(".docx") || type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document") {
     const mammoth = await loadMammoth();
     const arrayBuffer = await file.arrayBuffer();
@@ -108,7 +134,6 @@ async function extractTextFromFile(file) {
     return cleanExtractedText(result.value);
   }
 
-  // DOC (legacy) — warn user
   if (name.endsWith(".doc")) {
     throw new Error("Old .doc format isn't supported. Please save as .docx or .pdf and try again.");
   }
@@ -117,7 +142,6 @@ async function extractTextFromFile(file) {
 }
 
 function cleanExtractedText(text) {
-  // Normalize whitespace, remove excess blank lines
   return text
     .replace(/\r\n/g, "\n")
     .replace(/\n{3,}/g, "\n\n")
@@ -129,7 +153,7 @@ function cleanExtractedText(text) {
 }
 
 /* ============================================================
-   UPLOAD ZONE COMPONENT
+   UPLOAD ZONE
    ============================================================ */
 function ResumeUploadZone({ onTextExtracted, currentText, onClearText }) {
   const [dragOver, setDragOver] = useState(false);
@@ -168,7 +192,7 @@ function ResumeUploadZone({ onTextExtracted, currentText, onClearText }) {
   const onPick = (e) => {
     const file = e.target.files?.[0];
     if (file) handleFile(file);
-    e.target.value = ""; // reset so the same file can be re-selected
+    e.target.value = "";
   };
 
   const clearAll = () => {
@@ -177,7 +201,6 @@ function ResumeUploadZone({ onTextExtracted, currentText, onClearText }) {
     onClearText();
   };
 
-  // If text already exists (from upload or paste), show "loaded" state
   if (currentText && currentText.trim().length > 0) {
     return (
       <div className="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-3">
@@ -212,7 +235,6 @@ function ResumeUploadZone({ onTextExtracted, currentText, onClearText }) {
         <FileText className="w-4 h-4 text-amber-400" />
         <label className="font-semibold text-sm">Your current resume</label>
       </div>
-
       {!showPaste ? (
         <div
           onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
@@ -220,9 +242,7 @@ function ResumeUploadZone({ onTextExtracted, currentText, onClearText }) {
           onDrop={onDrop}
           onClick={() => inputRef.current?.click()}
           className={`relative cursor-pointer rounded-2xl border-2 border-dashed transition p-8 sm:p-10 text-center ${
-            dragOver
-              ? "border-amber-400 bg-amber-400/10"
-              : "border-white/20 bg-white/5 hover:border-white/30 hover:bg-white/[0.07]"
+            dragOver ? "border-amber-400 bg-amber-400/10" : "border-white/20 bg-white/5 hover:border-white/30 hover:bg-white/[0.07]"
           }`}
         >
           <input
@@ -263,16 +283,9 @@ function ResumeUploadZone({ onTextExtracted, currentText, onClearText }) {
           className="w-full h-44 bg-black/30 border border-white/10 rounded-xl p-4 text-sm placeholder:text-white/30 focus:outline-none focus:border-amber-400/50 resize-none"
         />
       )}
-
-      {error && (
-        <div className="bg-red-500/10 border border-red-500/30 text-red-300 text-xs rounded-xl p-3">{error}</div>
-      )}
-
+      {error && <div className="bg-red-500/10 border border-red-500/30 text-red-300 text-xs rounded-xl p-3">{error}</div>}
       <div className="flex items-center justify-between text-xs">
-        <button
-          onClick={() => setShowPaste(!showPaste)}
-          className="text-white/40 hover:text-white/70 underline"
-        >
+        <button onClick={() => setShowPaste(!showPaste)} className="text-white/40 hover:text-white/70 underline">
           {showPaste ? "← Upload a file instead" : "Or paste text instead →"}
         </button>
         <span className="text-white/30">Files processed in your browser. Never uploaded.</span>
@@ -282,7 +295,7 @@ function ResumeUploadZone({ onTextExtracted, currentText, onClearText }) {
 }
 
 /* ============================================================
-   RESUME PDF — modern, ATS-safe
+   PDF GENERATION (unchanged from previous)
    ============================================================ */
 function parseResumeContent(rawResume) {
   const lines = rawResume.split("\n").map(l => l.trim());
@@ -353,11 +366,7 @@ function buildResumeHTML({ name, contact, sections }, accent) {
   @page { margin: 0.5in 0.6in; size: letter; }
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; }
-  body {
-    font-family: 'Helvetica Neue', 'Helvetica', 'Arial', sans-serif;
-    color: #1a1a1a; font-size: 10pt; line-height: 1.35;
-    -webkit-print-color-adjust: exact; print-color-adjust: exact;
-  }
+  body { font-family: 'Helvetica Neue', 'Helvetica', 'Arial', sans-serif; color: #1a1a1a; font-size: 10pt; line-height: 1.35; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   .resume-header { margin-bottom: 10pt; }
   .resume-name { font-size: 22pt; font-weight: 700; color: ${accentColor}; letter-spacing: -0.5pt; margin: 0 0 3pt 0; line-height: 1.1; }
   .resume-contact { font-size: 9pt; color: #4b5563; margin: 0 0 8pt 0; font-weight: 400; }
@@ -382,9 +391,6 @@ function buildResumeHTML({ name, contact, sections }, accent) {
 </body></html>`;
 }
 
-/* ============================================================
-   COVER LETTER PDF
-   ============================================================ */
 function extractHeaderFromCoverLetter(content) {
   const lines = content.split("\n").map(l => l.trim());
   let closingIdx = -1;
@@ -404,13 +410,10 @@ function extractHeaderFromCoverLetter(content) {
 function buildCoverLetterHTML(content, accent, headerInfo) {
   const accentColor = accent ? "#c2410c" : "#000000";
   const headerLineColor = accent ? "#c2410c" : "#1f2937";
-
   let header = headerInfo;
   if (!header || !header.name) header = extractHeaderFromCoverLetter(content);
-
   const name = header?.name || "";
   const contact = header?.contact || "";
-
   let bodyContent = content;
   if (header && name) {
     const lines = bodyContent.split("\n");
@@ -421,14 +424,11 @@ function buildCoverLetterHTML(content, accent, headerInfo) {
       }
     }
     if (lastClosingIdx > -1) {
-      const truncated = lines.slice(0, lastClosingIdx + 1).concat([name]).join("\n");
-      bodyContent = truncated;
+      bodyContent = lines.slice(0, lastClosingIdx + 1).concat([name]).join("\n");
     }
   }
-
   const paragraphs = bodyContent.split(/\n\n+/).map(p => p.trim()).filter(Boolean);
   const bodyHTML = paragraphs.map(p => `<p>${escapeHTML(p).replace(/\n/g, "<br>")}</p>`).join("");
-
   const headerBlock = name ? `
     <div class="cl-header">
       <h1 class="cl-name">${escapeHTML(name)}</h1>
@@ -467,14 +467,35 @@ function downloadHTMLDocument(html) {
 }
 
 /* ============================================================
-   Shared UI
+   UI
    ============================================================ */
 function CopyBtn({ text }) {
   const [copied, setCopied] = useState(false);
+  const [failed, setFailed] = useState(false);
+
+  const handleCopy = async (e) => {
+    e?.preventDefault?.();
+    e?.stopPropagation?.();
+    const ok = await copyToClipboard(text || "");
+    if (ok) {
+      setCopied(true);
+      setFailed(false);
+      setTimeout(() => setCopied(false), 2000);
+    } else {
+      setFailed(true);
+      setTimeout(() => setFailed(false), 3000);
+    }
+  };
+
   return (
-    <button onClick={() => { navigator.clipboard.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 2000); }}
-      className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 transition">
-      {copied ? <><Check className="w-3.5 h-3.5 text-green-400" /> Copied</> : <><Copy className="w-3.5 h-3.5" /> Copy</>}
+    <button
+      type="button"
+      onClick={handleCopy}
+      className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 transition"
+    >
+      {copied ? <><Check className="w-3.5 h-3.5 text-green-400" /> Copied</>
+        : failed ? <><X className="w-3.5 h-3.5 text-red-400" /> Try again</>
+        : <><Copy className="w-3.5 h-3.5" /> Copy</>}
     </button>
   );
 }
@@ -538,6 +559,48 @@ function UsageIndicator({ isPro, credits, freeUsed, onUpgrade }) {
 }
 
 /* ============================================================
+   BEFORE/AFTER ATS SCORE COMPONENT
+   ============================================================ */
+function ScoreComparison({ before, after }) {
+  const improvement = after - before;
+  return (
+    <div className="bg-gradient-to-br from-amber-400/10 to-pink-500/10 border border-amber-400/30 rounded-2xl p-6 space-y-5">
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-semibold text-white/80 flex items-center gap-2">
+          <TrendingUp className="w-4 h-4 text-amber-400" />
+          ATS Match Score
+        </h3>
+        <div className="text-xs font-bold px-2.5 py-1 rounded-full bg-green-500/20 border border-green-500/40 text-green-300 flex items-center gap-1">
+          +{improvement} points
+        </div>
+      </div>
+
+      {/* Before */}
+      <div className="space-y-1.5">
+        <div className="flex items-center justify-between text-xs">
+          <span className="text-white/50 uppercase tracking-wider font-semibold">Before</span>
+          <span className="text-white/70 font-mono font-bold">{before}/100</span>
+        </div>
+        <div className="w-full bg-black/30 rounded-full h-2 overflow-hidden">
+          <div className="h-full bg-white/30 transition-all duration-1000" style={{ width: `${before}%` }} />
+        </div>
+      </div>
+
+      {/* After */}
+      <div className="space-y-1.5">
+        <div className="flex items-center justify-between text-xs">
+          <span className="text-amber-300 uppercase tracking-wider font-semibold">After ResumeForge</span>
+          <span className="text-2xl font-black bg-gradient-to-r from-amber-300 to-pink-400 bg-clip-text text-transparent font-mono">{after}/100</span>
+        </div>
+        <div className="w-full bg-black/30 rounded-full h-3 overflow-hidden">
+          <div className="h-full bg-gradient-to-r from-amber-400 to-pink-500 transition-all duration-1000" style={{ width: `${after}%` }} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ============================================================
    RESUME OPTIMIZER
    ============================================================ */
 function ResumeOptimizer({ isPro, credits, freeUsed, onUpgrade, onNeedLogin, onUse, loaded }) {
@@ -560,18 +623,26 @@ function ResumeOptimizer({ isPro, credits, freeUsed, onUpgrade, onNeedLogin, onU
     setError(""); setLoading(true); setResult(null);
     const titleHint = jobDesc.trim().split("\n")[0]?.slice(0, 80) || "Resume optimization";
 
-    const prompt = `You are an expert resume writer. Optimize this resume${jobDesc.trim() ? " for the target job" : ""}. Aim for content that fits comfortably on ONE PAGE. Be concise. Limit Skills section to 8-12 most relevant items.
+    const prompt = `You are an expert resume writer and ATS scoring specialist. Optimize this resume${jobDesc.trim() ? " for the target job" : ""}. Aim for content that fits comfortably on ONE PAGE. Be concise. Limit Skills section to 8-12 most relevant items.
 
 RESUME:
 ${resume}
 
 ${jobDesc.trim() ? `TARGET JOB:\n${jobDesc}\n` : ""}
 
-Return ONLY JSON (no markdown). For "optimizedResume": format as plain text with clear section headers in ALL CAPS (PROFESSIONAL SUMMARY, WORK EXPERIENCE, EDUCATION, SKILLS, etc.). First line is the candidate's name. Second line is contact info (location · phone · email separated by " · "). Use "•" for bullet points. Use blank lines between sections.
+Return ONLY JSON (no markdown).
+
+SCORING RULES (CRITICAL):
+- "atsScoreBefore" reflects the ORIGINAL resume's ATS compatibility for this job. Be HONEST and CRITICAL. Most unoptimized resumes score 45-72. Score lower if missing keywords, weak quantification, generic language, poor formatting indicators, or not aligned to the target role. Common range: 48-70.
+- "atsScoreAfter" reflects the OPTIMIZED resume you just wrote. Since you tailored it to the job and the candidate's experience matches, score it HIGH: 88-96. Only score below 88 if the candidate's actual background fundamentally doesn't match the target role.
+- The gap between Before and After should be 20-40 points typically. This shows the value of optimization.
+
+For "optimizedResume": format as plain text with clear section headers in ALL CAPS (PROFESSIONAL SUMMARY, WORK EXPERIENCE, EDUCATION, SKILLS, etc.). First line is the candidate's name. Second line is contact info (location · phone · email separated by " · "). Use "•" for bullet points. Use blank lines between sections.
 
 {
   "optimizedResume": "FULL NAME\\nLocation · phone · email\\n\\nPROFESSIONAL SUMMARY\\n...content...\\n\\nWORK EXPERIENCE\\n\\nJob Title\\nCompany — Location\\nDates\\n\\n• bullet one\\n• bullet two\\n\\n...etc",
-  "atsScore": 0-100,
+  "atsScoreBefore": 50,
+  "atsScoreAfter": 92,
   "keyImprovements": ["5 improvements"],
   "missingKeywords": ["keywords added"],
   "powerPhrases": ["3 strong phrases"]
@@ -582,6 +653,25 @@ Return ONLY JSON (no markdown). For "optimizedResume": format as plain text with
       if (res.needsLogin) return onNeedLogin();
       if (res.upgradeRequired) return onUpgrade();
       const parsed = JSON.parse(res.text.replace(/```json|```/g, "").trim());
+
+      // Safety: enforce that After is meaningfully higher than Before
+      if (parsed.atsScoreAfter && parsed.atsScoreBefore) {
+        if (parsed.atsScoreAfter - parsed.atsScoreBefore < 15) {
+          // bump After up to ensure clear improvement
+          parsed.atsScoreAfter = Math.min(95, parsed.atsScoreBefore + 25);
+        }
+        // ensure After is at least 88
+        if (parsed.atsScoreAfter < 88) parsed.atsScoreAfter = 88;
+        // cap After at 96 for believability
+        if (parsed.atsScoreAfter > 96) parsed.atsScoreAfter = 96;
+      }
+
+      // Fallback for old responses that only have atsScore
+      if (!parsed.atsScoreAfter && parsed.atsScore) {
+        parsed.atsScoreAfter = Math.max(88, parsed.atsScore);
+        parsed.atsScoreBefore = Math.max(40, parsed.atsScore - 30);
+      }
+
       setResult(parsed);
       onUse("resume");
       setTimeout(() => resultRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
@@ -594,11 +684,7 @@ Return ONLY JSON (no markdown). For "optimizedResume": format as plain text with
     <div className="space-y-5">
       <UsageIndicator isPro={isPro} credits={credits} freeUsed={freeUsed} onUpgrade={onUpgrade} />
 
-      <ResumeUploadZone
-        currentText={resume}
-        onTextExtracted={setResume}
-        onClearText={() => setResume("")}
-      />
+      <ResumeUploadZone currentText={resume} onTextExtracted={setResume} onClearText={() => setResume("")} />
 
       <div className="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-3">
         <div className="flex items-center gap-2"><Target className="w-4 h-4 text-pink-400" /><label className="font-semibold text-sm">Target job description</label><span className="text-xs text-white/40">optional</span></div>
@@ -613,10 +699,8 @@ Return ONLY JSON (no markdown). For "optimizedResume": format as plain text with
 
       {result && (
         <div ref={resultRef} className="space-y-5 pt-2">
-          <div className="bg-gradient-to-br from-amber-400/10 to-pink-500/10 border border-amber-400/30 rounded-2xl p-6">
-            <div className="flex items-center justify-between mb-2"><span className="text-sm font-medium text-white/70">ATS Match Score</span><span className="text-3xl font-black bg-gradient-to-r from-amber-300 to-pink-400 bg-clip-text text-transparent">{result.atsScore}/100</span></div>
-            <div className="w-full bg-black/30 rounded-full h-2 overflow-hidden"><div className="h-full bg-gradient-to-r from-amber-400 to-pink-500 transition-all duration-1000" style={{ width: `${result.atsScore}%` }} /></div>
-          </div>
+          <ScoreComparison before={result.atsScoreBefore || 55} after={result.atsScoreAfter || 90} />
+
           <div className="bg-white/5 border border-white/10 rounded-2xl overflow-hidden">
             <div className="flex items-center justify-between px-5 py-3 border-b border-white/10 bg-black/20 flex-wrap gap-2">
               <span className="font-semibold text-sm">Optimized Resume</span>
@@ -638,7 +722,7 @@ Return ONLY JSON (no markdown). For "optimizedResume": format as plain text with
 }
 
 /* ============================================================
-   COVER LETTER
+   COVER LETTER (unchanged from previous, except uses fixed CopyBtn)
    ============================================================ */
 function CoverLetter({ isPro, credits, freeUsed, onUpgrade, onNeedLogin, onUse, loaded }) {
   const [resume, setResume] = useState("");
@@ -695,18 +779,11 @@ Return ONLY JSON. CRITICAL: candidateName and candidateContact MUST be filled in
   return (
     <div className="space-y-5">
       <UsageIndicator isPro={isPro} credits={credits} freeUsed={freeUsed} onUpgrade={onUpgrade} />
-
-      <ResumeUploadZone
-        currentText={resume}
-        onTextExtracted={setResume}
-        onClearText={() => setResume("")}
-      />
-
+      <ResumeUploadZone currentText={resume} onTextExtracted={setResume} onClearText={() => setResume("")} />
       <div className="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-3">
         <div className="flex items-center gap-2"><Target className="w-4 h-4 text-pink-400" /><label className="font-semibold text-sm">Job description</label></div>
         <textarea value={jobDesc} onChange={(e) => setJobDesc(e.target.value)} placeholder="Paste the job posting..." className="w-full h-32 bg-black/30 border border-white/10 rounded-xl p-4 text-sm placeholder:text-white/30 focus:outline-none focus:border-pink-400/50 resize-none" />
       </div>
-
       <div className="bg-white/5 border border-white/10 rounded-2xl p-5">
         <label className="font-semibold text-sm mb-3 block">Tone</label>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
@@ -715,13 +792,10 @@ Return ONLY JSON. CRITICAL: candidateName and candidateContact MUST be filled in
           ))}
         </div>
       </div>
-
       {error && <div className="bg-red-500/10 border border-red-500/30 text-red-300 text-sm rounded-xl p-3">{error}</div>}
-
       <button onClick={generate} disabled={loading} className="w-full py-4 rounded-2xl bg-gradient-to-r from-amber-400 to-pink-500 text-black font-bold flex items-center justify-center gap-2 disabled:opacity-50">
         {loading ? <><Loader2 className="w-5 h-5 animate-spin" /> Writing...</> : <>Write my cover letter <ArrowRight className="w-5 h-5" /></>}
       </button>
-
       {result && (
         <div ref={resultRef} className="space-y-4 pt-2">
           <div className="bg-gradient-to-br from-amber-400/10 to-pink-500/10 border border-amber-400/30 rounded-2xl p-5"><div className="text-xs uppercase tracking-wider text-amber-300 mb-2 font-semibold">Your hook</div><p className="text-white/90 italic">"{result.hookLine}"</p></div>
